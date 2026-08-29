@@ -29,6 +29,11 @@ public enum RE2 {
     public static let defaultHPField: UInt64  = 0x04
     public static let currentHPField: UInt64  = 0x08
 
+    /// Persistent save counter. The game increments it when saving, so zeroing
+    /// it makes the next save write 1 — writing 1 directly gets overwritten.
+    static let saveHeaderType = "GameHeaderSaveData"
+    static let saveTimesField: UInt64 = 0x50
+
     /// app.ropeway.GameClock._MeasureGameElapsedTime — clearing it stops the
     /// in-game timer at its current value.
     public static let gameClockType = "app.ropeway.GameClock"
@@ -77,6 +82,27 @@ public struct GameTypes {
             if mem.writeU8(h.object &+ base &+ field, on ? 1 : 0) { n += 1 }
         }
         return n
+    }
+
+    /// Zero the save counter so the next save records 1.
+    ///
+    /// Found by name (`findfield SaveCount`). The previous attempt at this
+    /// intersected 178,360 scan candidates down to 13 and wrote to all of
+    /// them; four were `(index, -1)` handle pairs and the game segfaulted.
+    @discardableResult
+    func resetSaveCount(_ mem: ProcessMemory) -> (written: Int, previous: Int32?) {
+        guard let i = db.indexOf(mem, fullName: RE2.saveHeaderType),
+              let vt = db.managedVT(mem, index: i) else { return (0, nil) }
+        let base = UInt64(bitPattern: Int64(db.fieldPtrOffset(mem, managedVT: vt)))
+        var n = 0
+        var previous: Int32?
+        for obj in db.instances(mem, managedVT: vt) {
+            let addr = obj &+ base &+ RE2.saveTimesField
+            guard let cur = mem.readI32(addr), cur >= 0, cur < 100_000 else { continue }
+            if cur > 0, previous == nil { previous = cur }
+            if cur != 0, mem.writeI32(addr, 0) { n += 1 }
+        }
+        return (n, previous)
     }
 
     /// Freeze or resume the in-game clock.

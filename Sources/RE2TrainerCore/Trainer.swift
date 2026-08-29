@@ -22,6 +22,7 @@ public final class Trainer: ObservableObject {
     @Published public private(set) var pausedForSave = false
     @Published public private(set) var calibrated = false
     @Published public private(set) var calibrationHint = "Not calibrated"
+    @Published public private(set) var saveCountStatus = ""
 
 
     @Published public var godmode = false        { didSet { toggle(.godmode, godmode) } }
@@ -201,6 +202,20 @@ public final class Trainer: ObservableObject {
     }
 
     // MARK: - calibration
+
+    /// Zero the save counter. One-shot: save afterwards and it records 1.
+    public func resetSaveCount() {
+        guard let mem, let gt = gameTypes else {
+            set { $0.saveCountStatus = "Not attached" }
+            return
+        }
+        let (n, prev) = gt.resetSaveCount(mem)
+        set {
+            $0.saveCountStatus = n > 0
+                ? "Was \(prev.map(String.init) ?? "?") — now save, it will record 1"
+                : "Save counter already 0 — save to record 1"
+        }
+    }
 
     public static let magnumWeaponID: Int32 = 31
     public static let magnumAmmo: Int32 = 99

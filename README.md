@@ -53,6 +53,31 @@ candidates, 36 of them wrong — and writing to all 37 froze the game. It also
 hard-coded enemy HP at 620, silently missing every enemy with different HP,
 which in one room was all of them.
 
+### Everything is a name lookup
+
+The TDB carries field names too, so features are found rather than hunted:
+
+```
+findfield SaveCount   -> GameHeaderSaveData +0x50 SaveTimes
+findfield Wince       -> EnemyAddDamageController +0x54 WinceRange
+findfield DownTime    -> DownTimeInfo +0x04 DownTime
+```
+
+Measured against the scanning approaches they replaced:
+
+| target | by scanning | by name |
+|---|---|---|
+| player health | 37 candidates, HP misread as 0/1200 | 1 instance, exact |
+| enemy health | assumed all 620 HP | own type; real HP 530-890 |
+| game timer | five approaches, all failed | one named boolean |
+| save counter | 178,360 candidates, then a segfault | one lookup |
+| item box | ~15 copies, edits vanished | one list, edits persist |
+
+The save counter is the sharpest example. Scanning narrowed 178,360 candidates
+to 13 across three save cycles; four were `(index, -1)` handle pairs, writing
+to them crashed the game, and the result was never confirmed. `findfield
+SaveCount` returned the type, field and offset directly.
+
 ### Engine flags beat write loops
 
 The engine exposes its own switches, found by reading field names:
@@ -64,7 +89,14 @@ app.ropeway.HitPointController
 
 app.ropeway.GameClock
   +0x29  _MeasureGameElapsedTime     clear to stop the in-game timer
+
+GameHeaderSaveData
+  +0x50  SaveTimes                   zero it; the next save records 1
 ```
+
+The save counter is incremented by the game on save, so writing `1` directly is
+overwritten. Writing `0` lets the game's own increment produce `1` — a value it
+computed itself, and therefore one it serialises happily.
 
 These are *set*, not pinned. Nothing races the engine, nothing fights a save,
 and there is no loop to crash. The in-game timer stopped dead at 01:27:35 the
@@ -82,10 +114,11 @@ which is what the Infinite Magnum toggle does.
 Setting `Count = -1` (the value some infinite weapons appeared to hold) does not
 work — it displays as `-1` and decrements normally.
 
-### Inventory
+### Inventory and the item box
 
 ```
-InventoryManager -> CurrentInventory -> _Slots -> Slot._Stock -> DefaultItem
+carried:  InventoryManager -> CurrentInventory -> _Slots -> Slot._Stock -> DefaultItem
+box:      ItemBoxBehavior.<ItemList>  (400 slots, exists only while the box is open)
 PrimitiveItem:  ItemId, WeaponId, WeaponParts, BulletId, Count
 ```
 

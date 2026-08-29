@@ -83,6 +83,19 @@ struct TrainerPanel: View {
 
             Divider()
 
+            VStack(alignment: .leading, spacing: 4) {
+                Button("Reset Save Count") { trainer.resetSaveCount() }
+                    .disabled(!trainer.attached)
+                if !trainer.saveCountStatus.isEmpty {
+                    Text(trainer.saveCountStatus)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .font(.caption)
+
+            Divider()
+
             HStack {
                 Button("Reattach") { trainer.attach() }
                 Spacer()
