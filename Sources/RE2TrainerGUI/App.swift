@@ -35,6 +35,12 @@ struct TrainerPanel: View {
                 }
             }
 
+            if trainer.pausedForSave {
+                Label("Save in progress — writes paused", systemImage: "pause.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
             Text(trainer.status)
                 .font(.caption)
                 .foregroundStyle(.secondary)

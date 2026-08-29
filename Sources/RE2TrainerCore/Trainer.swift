@@ -19,6 +19,7 @@ public final class Trainer: ObservableObject {
     @Published public private(set) var playerHP = ""
     @Published public private(set) var enemiesTracked = 0
     @Published public private(set) var binaryVerified = false
+    @Published public private(set) var pausedForSave = false
 
     @Published public var godmode = false        { didSet { toggle(.godmode, godmode) } }
     @Published public var oneHitKill = false     { didSet { toggle(.oneHit, oneHitKill) } }
@@ -95,6 +96,17 @@ public final class Trainer: ObservableObject {
 
         while isRunning(f) {
             if kill(target, 0) != 0 { set { $0.attached = false; $0.status = "Game exited" }; break }
+
+            // Never write while the game is serializing a save. Doing so froze
+            // the game twice: our writes raced SaveThread_SerializeManager as it
+            // walked the same structures.
+            if SaveGuard.isSaving(mem) {
+                set { $0.pausedForSave = true }
+                usleep(200_000)
+                continue
+            }
+            set { $0.pausedForSave = false }
+
             let due = Date().timeIntervalSince(lastScan) > 5
 
             switch f {

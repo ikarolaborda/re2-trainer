@@ -53,6 +53,17 @@ by writing to unverified candidates. Only confirmed enemy types are targeted;
 `Scanner.knownEnemyMaxHP` documents how to add more (snapshot, damage one
 enemy, diff for what decreased).
 
+### Save safety
+
+The trainer never writes while the game is serializing a save. It inspects the
+target's threads by name and holds off whenever `SaveThread_SerializeManager`
+is running, resuming afterwards. The GUI shows "Save in progress — writes
+paused" while this is active.
+
+This is not a precaution, it is a fix: writing into the inventory and health
+structures while the game walked them for serialization froze the game twice,
+both times requiring a force-quit.
+
 ### Cost
 
 A full scan reads ~3.5 GB. Loops therefore cache their targets and re-scan every
