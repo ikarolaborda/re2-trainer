@@ -79,3 +79,49 @@ public struct Calibration {
         return nil
     }
 }
+
+// MARK: - Passive auto-calibration
+//
+// Asking the player to take a deliberate hit on every launch is impractical.
+// In normal play you take damage constantly, so the trainer can simply watch
+// and lock on when it sees it happen -- no manual step, no gameplay change.
+//
+// The reference filter (see RefFilter) is applied first as a safety net: it
+// removes candidates nothing points at, which in measurement was a third of
+// them and included every one with visible garbage in adjacent fields.
+public extension Calibration {
+
+    /// One observation pass. Feed this repeatedly while the player plays.
+    /// Returns true once enough evidence has accumulated to trust the result.
+    @discardableResult
+    mutating func observe(_ mem: ProcessMemory,
+                          plausibleDamage: ClosedRange<Int32> = 1...900) -> Bool {
+        let current = Scanner.playerHealth(mem)
+        var now: [UInt64: Int32] = [:]
+        for h in current {
+            if let c = mem.readI32(h.currentOffset) { now[h.address] = c }
+        }
+
+        // First pass just establishes a baseline.
+        if baseline.isEmpty { baseline = now; return isCalibrated }
+
+        // A component that dropped by a plausible damage amount is evidence.
+        var movers: [UInt64] = []
+        for (addr, before) in baseline {
+            guard let after = now[addr], after < before else { continue }
+            let delta = before - after
+            if plausibleDamage.contains(delta) { movers.append(addr) }
+        }
+
+        if !movers.isEmpty {
+            // Keep only movers that something actually references.
+            let refs = RefFilter.referenced(mem, addresses: movers)
+            let trusted = movers.filter { refs[$0, default: 0] > 0 }
+            let chosen = trusted.isEmpty ? movers : trusted
+            verified = Array(Set(verified).union(chosen))
+        }
+
+        baseline = now
+        return isCalibrated
+    }
+}

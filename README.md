@@ -15,94 +15,49 @@ bundle (which would break its App Store signature).
 
 ## How it works
 
-Everything is **signature-based**: features find their targets by struct *shape*,
-not by address or offset.
+It reads the game's own **type database**.
+
+RE Engine ships a TDB — a table of every type in the game, with names — and
+every managed object begins with a pointer to its type. So the trainer does not
+infer what an object is; it looks it up:
 
 ```
-health component:   +0x00 marker(1)   +0x04 max HP   +0x08 current HP
-item entry:         +0x10 itemID  +0x14 weaponID  +0x18 upgrades
-                    +0x1c ammoType  +0x20 quantity
+find TDB (magic "TDB\0", v74, 102,046 types)
+  -> resolve "app.ropeway.HitPointController"      (player health)
+  -> resolve "app.ropeway.EnemyHitPointController" (enemy health)
+  -> enumerate instances by their type pointer
+     health fields at +0x50: marker(1), max, current
 ```
 
-The player is identified by `max == 1200`, which no enemy shares. Enemies are
-matched against an allow-list of confirmed max-HP values (zombie = 620).
+Player and enemy health are **different declared types**, so telling them apart
+needs no heuristic at all.
+
+TDB structure layout comes from [REFramework](https://github.com/praydog/REFramework)
+(`shared/sdk/RETypeDB.hpp`, `RETypeDefinition.hpp`). REFramework injects a DLL
+and is Windows-only; none of that is needed here, because the TDB is plain data
+readable through `task_for_pid`. This is not a port — it uses their
+reverse-engineering of the format as a specification.
+
+### Why not signature scanning
+
+Earlier versions identified objects by struct shape: "marker==1, max==1200 is
+the player." Measured against the type database on the same running game:
+
+| | type database | signature scan |
+|---|---|---|
+| player | 1200/1200, **1 instance** | 0/1200, **37 candidates** |
+| enemies | 4 alive, HP 560/770/830/890 | 31 "alive", all assumed 620 |
+
+The heuristic reported the player's health as `0/1200` and produced 37
+candidates, 36 of them wrong — and writing to all 37 froze the game. It also
+hard-coded enemy HP at 620, silently missing every enemy with different HP,
+which in one room was all of them.
 
 ### Why not pointer chains
 
-The first version of this trainer shipped 43 static pointer chains
-(`moduleBase + offset -> +off -> +off`) to the player's health component. They
-were built from a scan of 61 candidates, of which 43 resolved correctly through
-a full game restart — ASLR rebase and heap reallocation included.
-
-**On the next restart, all 61 failed.** Not one resolved.
-
-So the "verified" set was a sample of one, and a chain that survives a restart
-once is not a chain that survives restarts. Struct shapes, by contrast, have
-held across every session observed. Signature scanning is also strictly more
-portable: it needs no module base, so it is immune to ASLR, and it survives
-game patches that would invalidate every offset.
-
-The chains are preserved in git history if anyone wants to revisit them.
-
-### Enemy detection is an allow-list, deliberately
-
-A generic "any health-shaped struct that isn't the player" signature matches
-**~86,000** locations in a live game, nearly all of them ordinary data. Writing
-to those would be reckless — an earlier version of this work crashed the game
-by writing to unverified candidates. Only confirmed enemy types are targeted;
-`Scanner.knownEnemyMaxHP` documents how to add more (snapshot, damage one
-enemy, diff for what decreased).
-
-### Save safety
-
-The trainer never writes while the game is serializing a save. It inspects the
-target's threads by name and holds off whenever `SaveThread_SerializeManager`
-is running, resuming afterwards. The GUI shows "Save in progress — writes
-paused" while this is active.
-
-This is not a precaution, it is a fix: writing into the inventory and health
-structures while the game walked them for serialization froze the game twice,
-both times requiring a force-quit.
-
-### Calibration: signatures are not evidence
-
-Godmode requires calibration before it will run.
-
-`marker == 1 && max == 1200` reads like a precise signature for the player's
-health. It is not: a live game contains ~45 matches, several with obvious
-garbage in adjacent fields. Writing max HP into all of them froze the game.
-
-So the player's component is identified by measurement, not by shape:
-
-1. At full health, snapshot every candidate and its current value
-2. Take one hit
-3. Keep only the components whose value actually dropped
-
-That typically leaves one or two. Calibrated addresses are re-validated before
-every write and dropped when heap churn invalidates them; if all go stale the
-toggle disables itself and asks for recalibration.
-
-The general lesson, learned the expensive way across four freezes: a struct
-that *looks* like the thing is not the thing. Only behaviour proves identity.
-
-### Never cache addresses of transient objects
-
-Each pass scans and writes in a single traversal. An earlier version cached
-target addresses for 5 seconds and wrote to them at 8 Hz, which crashed the
-game: killed enemies are deallocated, the game recycles the memory, and a
-stale write lands inside whatever object now occupies that address. The result
-was `EXC_BAD_ACCESS at 0x12` on the game's job thread — a corrupted pointer
-being dereferenced.
-
-Re-validating the struct before writing is *not* sufficient, because recycled
-memory can match the signature by coincidence. The only safe rule is to write
-a target only in the same traversal that found it.
-
-### Cost
-
-A full scan reads ~3.5 GB. Loops therefore cache their targets and re-scan every
-5 seconds, writing to the cached set at ~8 Hz in between. An early version
-scanned at tick frequency and pushed the game to 384% CPU.
+An earlier version shipped 43 static chains verified to survive one game
+restart. On the next restart, all 61 candidates failed. One successful restart
+is not proof.
 
 ## Version safety
 

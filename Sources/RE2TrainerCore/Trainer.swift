@@ -31,7 +31,7 @@ public final class Trainer: ObservableObject {
     public enum Feature: String { case godmode, oneHit, magnum }
 
     private var mem: ProcessMemory?
-    private var calibration = Calibration()
+    private var gameTypes: GameTypes?
 
     private var running: Set<Feature> = []
     private let queue = DispatchQueue(label: "trainer.loops", attributes: .concurrent)
@@ -53,10 +53,21 @@ public final class Trainer: ObservableObject {
         }
         let (ok, _) = GameProcess.verifyBinary()
         mem = m
+        set { $0.status = "Resolving type database…" }
+        gameTypes = GameTypes(m)
         set {
             $0.pid = p; $0.attached = true; $0.binaryVerified = ok
-            $0.status = ok ? "Attached to pid \(p)"
-                           : "Attached — version mismatch, behaviour undefined"
+            if self.gameTypes == nil {
+                $0.status = "Attached, but type database not found"
+            } else if !ok {
+                $0.status = "Attached — version mismatch, behaviour undefined"
+            } else {
+                $0.status = "Attached to pid \(p) · TDB v\(self.gameTypes!.db.version)"
+            }
+            $0.calibrated = self.gameTypes != nil
+            $0.calibrationHint = self.gameTypes != nil
+                ? "Types resolved — no calibration needed"
+                : "Type database unavailable"
         }
         return true
     }
@@ -74,10 +85,10 @@ public final class Trainer: ObservableObject {
 
     private func toggle(_ f: Feature, _ on: Bool) {
         guard on else { lock.lock(); running.remove(f); lock.unlock(); return }
-        if f == .godmode, !calibration.isCalibrated {
+        if f == .godmode, gameTypes == nil {
             set { t in
                 t.godmode = false
-                t.calibrationHint = "Calibrate before enabling Godmode"
+                t.calibrationHint = "Type database unavailable — cannot enable"
             }
             return
         }
@@ -121,25 +132,26 @@ public final class Trainer: ObservableObject {
             // caused a use-after-free crash (EXC_BAD_ACCESS at 0x12).
             switch f {
             case .godmode:
-                // Only ever write to components calibration proved are the
-                // player's. A signature match alone is not evidence: ~45
-                // structs match `marker==1, max==1200` and most are not health.
-                let (_, valid) = calibration.applyGodmode(mem)
-                if valid == 0 {
-                    set {
-                        $0.godmode = false
-                        $0.calibrated = false
-                        $0.calibrationHint = "Calibration went stale — recalibrate"
-                    }
-                    break
+                // Instances of app.ropeway.HitPointController, as declared by
+                // the engine. Typically exactly one, versus ~37 for a shape
+                // heuristic — and writing to those 37 froze the game.
+                guard let gt = gameTypes else { break }
+                let hs = gt.playerHealth(mem)
+                for h in hs where h.current < h.maxHP {
+                    mem.writeI32(h.currentAddress, h.maxHP)
                 }
-                if let v = calibration.sampleHP(mem) {
-                    set { $0.playerHP = "\(v)/\(Scanner.playerMaxHP)" }
-                }
+                if let p = hs.first { set { $0.playerHP = "\(p.current)/\(p.maxHP)" } }
 
             case .oneHit:
-                let alive = Scanner.applyOneHit(mem)
-                set { $0.enemiesTracked = alive }
+                // Every app.ropeway.EnemyHitPointController instance, whatever
+                // its max HP. Enemy HP varies (560/770/830/890 seen in one
+                // room), so the old fixed allow-list missed most of them.
+                guard let gt = gameTypes else { break }
+                let es = gt.enemyHealth(mem)
+                for e in es where e.current > 1 {
+                    mem.writeI32(e.currentAddress, 1)
+                }
+                set { $0.enemiesTracked = es.count }
 
             case .magnum:
                 if vtable == nil { vtable = Scanner.itemVTable(mem) }
@@ -159,28 +171,6 @@ public final class Trainer: ObservableObject {
     }
 
     // MARK: - calibration
-
-    /// Step 1: at full health. Snapshots every candidate component.
-    public func calibrateStep1() {
-        guard let mem else { return }
-        calibration.capture(mem)
-        set {
-            $0.calibrated = false
-            $0.calibrationHint = "Baseline taken (\(self.calibration.baseline.count) candidates) — now take one hit"
-        }
-    }
-
-    /// Step 2: after taking damage. Keeps only components that actually moved.
-    public func calibrateStep2() {
-        guard let mem else { return }
-        let n = calibration.refine(mem)
-        set {
-            $0.calibrated = n > 0
-            $0.calibrationHint = n > 0
-                ? "Calibrated: \(n) verified component\(n == 1 ? "" : "s")"
-                : "No component moved — take a hit between the two steps"
-        }
-    }
 
     public static let magnumWeaponID: Int32 = 31
     public static let magnumAmmo: Int32 = 99

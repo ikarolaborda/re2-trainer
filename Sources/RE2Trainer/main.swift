@@ -27,6 +27,23 @@ case "status":
     if let base = GameProcess.moduleBase(mem) {
         print("base     : 0x\(String(base, radix: 16))")
     }
+    print("resolving type database (102k types, one-time)...")
+    if let gt = GameTypes(mem) {
+        print("tdb      : v\(gt.db.version)  \(gt.db.numTypes) types  @0x\(String(gt.db.base, radix: 16))")
+        let ph = gt.playerHealth(mem)
+        if let p = ph.first {
+            print("player   : \(p.current)/\(p.maxHP)   [\(RE2.playerHealthType)]  \(ph.count) instance(s)")
+        } else {
+            print("player   : no instance (in-game with a save loaded?)")
+        }
+        let eh = gt.enemyHealth(mem)
+        print("enemies  : \(eh.count) alive   [\(RE2.enemyHealthType)]")
+        let hps = eh.map { $0.maxHP }.sorted()
+        if !hps.isEmpty { print("           max HP seen: \(Set(hps).sorted())") }
+    } else {
+        print("tdb      : not found")
+    }
+    print("--- legacy signature scan, for comparison ---")
     let player = Scanner.playerHealth(mem)
     if let first = player.first, let cur = mem.readI32(first.currentOffset) {
         print("player   : \(cur)/\(first.maxHP)   (\(player.count) components)")
