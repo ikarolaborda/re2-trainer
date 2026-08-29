@@ -29,6 +29,12 @@ public enum RE2 {
     public static let defaultHPField: UInt64  = 0x04
     public static let currentHPField: UInt64  = 0x08
 
+    /// Mr. X (em7100) and other bosses. Forcing an EnemyHitPointController's
+    /// current HP to 0 puts him on his knees; holding it there keeps him down.
+    /// He is distinguished from ordinary enemies by max HP — zombies observed
+    /// at 530-890, him at 1100.
+    static let bossMinHP: Int32 = 1000
+
     /// Persistent save counter. The game increments it when saving, so zeroing
     /// it makes the next save write 1 — writing 1 directly gets overwritten.
     static let saveHeaderType = "GameHeaderSaveData"
@@ -80,6 +86,16 @@ public struct GameTypes {
         var n = 0
         for h in playerHealth(mem) {
             if mem.writeU8(h.object &+ base &+ field, on ? 1 : 0) { n += 1 }
+        }
+        return n
+    }
+
+    /// Force bosses onto their knees by holding current HP at zero.
+    @discardableResult
+    func keepBossesDown(_ mem: ProcessMemory) -> Int {
+        var n = 0
+        for e in enemyHealth(mem) where e.maxHP >= RE2.bossMinHP && e.current > 0 {
+            if mem.writeI32(e.currentAddress, 0) { n += 1 }
         }
         return n
     }
@@ -136,10 +152,13 @@ public struct GameTypes {
 
     /// Every living enemy, whatever its max HP.
     public func enemyHealth(_ mem: ProcessMemory) -> [TypedHealth] {
+        allEnemyHealth(mem).filter { $0.current > 0 }
+    }
+
+    /// Every enemy health controller, including downed ones.
+    public func allEnemyHealth(_ mem: ProcessMemory) -> [TypedHealth] {
         guard let vt = enemyVT else { return [] }
-        return db.instances(mem, managedVT: vt)
-            .compactMap { read(mem, $0) }
-            .filter { $0.current > 0 }
+        return db.instances(mem, managedVT: vt).compactMap { read(mem, $0) }
     }
 }
 

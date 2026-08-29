@@ -94,6 +94,14 @@ GameHeaderSaveData
   +0x50  SaveTimes                   zero it; the next save records 1
 ```
 
+Mr. X (`em7100`) is put on his knees by forcing his
+`EnemyHitPointController` current HP to 0, and stays there while it is held.
+He is told apart from ordinary enemies by max HP: zombies observed at 530-890,
+him at 1100. The engine calls the stagger a "wince"
+(`<CurrentWincePoint>`, `WinceRange`), and
+`app.ropeway.enemy.em7100.Accessor_Em7100` names the state directly with
+`b_KneelDown` / `_KneelDown` — useful if the HP route ever stops working.
+
 The save counter is incremented by the game on save, so writing `1` directly is
 overwritten. Writing `0` lets the game's own increment produce `1` — a value it
 computed itself, and therefore one it serialises happily.

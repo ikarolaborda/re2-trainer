@@ -77,6 +77,7 @@ struct TrainerPanel: View {
                 Toggle("Invincible", isOn: $trainer.invincible)
                 Toggle("No Damage", isOn: $trainer.noDamage)
                 Toggle("Freeze Timer", isOn: $trainer.freezeTimer)
+                Toggle("Mr. X Stays Down", isOn: $trainer.bossesDown)
             }
             .toggleStyle(.switch)
             .disabled(!trainer.attached)

@@ -35,7 +35,10 @@ public final class Trainer: ObservableObject {
     @Published public var noDamage   = false { didSet { toggle(.noDamage, noDamage) } }
     @Published public var freezeTimer = false { didSet { toggle(.freezeTimer, freezeTimer) } }
 
-    public enum Feature: String { case godmode, oneHit, magnum, invincible, noDamage, freezeTimer }
+    /// Holds bosses (Mr. X) at 0 HP so they stay on their knees.
+    @Published public var bossesDown = false { didSet { toggle(.bossesDown, bossesDown) } }
+
+    public enum Feature: String { case godmode, oneHit, magnum, invincible, noDamage, freezeTimer, bossesDown }
 
     private var mem: ProcessMemory?
     private var gameTypes: GameTypes?
@@ -120,6 +123,7 @@ public final class Trainer: ObservableObject {
                 case .invincible:  t.invincible = false
                 case .noDamage:    t.noDamage = false
                 case .freezeTimer: t.freezeTimer = false
+                case .bossesDown:  t.bossesDown = false
                 }
             }
             return
@@ -173,6 +177,9 @@ public final class Trainer: ObservableObject {
                     mem.writeI32(e.currentAddress, 1)
                 }
                 set { $0.enemiesTracked = es.count }
+
+            case .bossesDown:
+                _ = gameTypes?.keepBossesDown(mem)
 
             case .invincible:
                 _ = gameTypes?.setPlayerFlag(mem, field: RE2.invincibleField, on: true)
