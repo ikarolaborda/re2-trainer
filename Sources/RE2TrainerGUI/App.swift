@@ -48,8 +48,28 @@ struct TrainerPanel: View {
 
             Divider()
 
+            // Godmode writes into the player's health component, and a
+            // signature match alone does not identify it -- ~45 structs match.
+            // Calibration proves which ones move when you take damage.
+            VStack(alignment: .leading, spacing: 6) {
+                Text(trainer.calibrationHint)
+                    .font(.caption)
+                    .foregroundStyle(trainer.calibrated ? .green : .orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
+                    Button("1 · Baseline") { trainer.calibrateStep1() }
+                    Button("2 · After hit") { trainer.calibrateStep2() }
+                }
+                .font(.caption)
+                .disabled(!trainer.attached)
+            }
+            .padding(.bottom, 2)
+
+            Divider()
+
             Group {
                 Toggle("Godmode", isOn: $trainer.godmode)
+                    .disabled(!trainer.calibrated)
                 if trainer.godmode && !trainer.playerHP.isEmpty {
                     Text("HP \(trainer.playerHP)")
                         .font(.caption).foregroundStyle(.secondary)

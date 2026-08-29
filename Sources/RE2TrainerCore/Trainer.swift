@@ -20,6 +20,9 @@ public final class Trainer: ObservableObject {
     @Published public private(set) var enemiesTracked = 0
     @Published public private(set) var binaryVerified = false
     @Published public private(set) var pausedForSave = false
+    @Published public private(set) var calibrated = false
+    @Published public private(set) var calibrationHint = "Not calibrated"
+
 
     @Published public var godmode = false        { didSet { toggle(.godmode, godmode) } }
     @Published public var oneHitKill = false     { didSet { toggle(.oneHit, oneHitKill) } }
@@ -28,6 +31,8 @@ public final class Trainer: ObservableObject {
     public enum Feature: String { case godmode, oneHit, magnum }
 
     private var mem: ProcessMemory?
+    private var calibration = Calibration()
+
     private var running: Set<Feature> = []
     private let queue = DispatchQueue(label: "trainer.loops", attributes: .concurrent)
     private let lock = NSLock()
@@ -69,6 +74,13 @@ public final class Trainer: ObservableObject {
 
     private func toggle(_ f: Feature, _ on: Bool) {
         guard on else { lock.lock(); running.remove(f); lock.unlock(); return }
+        if f == .godmode, !calibration.isCalibrated {
+            set { t in
+                t.godmode = false
+                t.calibrationHint = "Calibrate before enabling Godmode"
+            }
+            return
+        }
         guard attached, mem != nil else {
             set { t in
                 switch f {
@@ -109,8 +121,21 @@ public final class Trainer: ObservableObject {
             // caused a use-after-free crash (EXC_BAD_ACCESS at 0x12).
             switch f {
             case .godmode:
-                let (_, sample) = Scanner.applyGodmode(mem)
-                if let v = sample { set { $0.playerHP = "\(v)/\(Scanner.playerMaxHP)" } }
+                // Only ever write to components calibration proved are the
+                // player's. A signature match alone is not evidence: ~45
+                // structs match `marker==1, max==1200` and most are not health.
+                let (_, valid) = calibration.applyGodmode(mem)
+                if valid == 0 {
+                    set {
+                        $0.godmode = false
+                        $0.calibrated = false
+                        $0.calibrationHint = "Calibration went stale — recalibrate"
+                    }
+                    break
+                }
+                if let v = calibration.sampleHP(mem) {
+                    set { $0.playerHP = "\(v)/\(Scanner.playerMaxHP)" }
+                }
 
             case .oneHit:
                 let alive = Scanner.applyOneHit(mem)
@@ -131,6 +156,30 @@ public final class Trainer: ObservableObject {
 
         if f == .oneHit { set { $0.enemiesTracked = 0 } }
         if f == .godmode { set { $0.playerHP = "" } }
+    }
+
+    // MARK: - calibration
+
+    /// Step 1: at full health. Snapshots every candidate component.
+    public func calibrateStep1() {
+        guard let mem else { return }
+        calibration.capture(mem)
+        set {
+            $0.calibrated = false
+            $0.calibrationHint = "Baseline taken (\(self.calibration.baseline.count) candidates) — now take one hit"
+        }
+    }
+
+    /// Step 2: after taking damage. Keeps only components that actually moved.
+    public func calibrateStep2() {
+        guard let mem else { return }
+        let n = calibration.refine(mem)
+        set {
+            $0.calibrated = n > 0
+            $0.calibrationHint = n > 0
+                ? "Calibrated: \(n) verified component\(n == 1 ? "" : "s")"
+                : "No component moved — take a hit between the two steps"
+        }
     }
 
     public static let magnumWeaponID: Int32 = 31

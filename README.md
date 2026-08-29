@@ -64,6 +64,27 @@ This is not a precaution, it is a fix: writing into the inventory and health
 structures while the game walked them for serialization froze the game twice,
 both times requiring a force-quit.
 
+### Calibration: signatures are not evidence
+
+Godmode requires calibration before it will run.
+
+`marker == 1 && max == 1200` reads like a precise signature for the player's
+health. It is not: a live game contains ~45 matches, several with obvious
+garbage in adjacent fields. Writing max HP into all of them froze the game.
+
+So the player's component is identified by measurement, not by shape:
+
+1. At full health, snapshot every candidate and its current value
+2. Take one hit
+3. Keep only the components whose value actually dropped
+
+That typically leaves one or two. Calibrated addresses are re-validated before
+every write and dropped when heap churn invalidates them; if all go stale the
+toggle disables itself and asks for recalibration.
+
+The general lesson, learned the expensive way across four freezes: a struct
+that *looks* like the thing is not the thing. Only behaviour proves identity.
+
 ### Never cache addresses of transient objects
 
 Each pass scans and writes in a single traversal. An earlier version cached
