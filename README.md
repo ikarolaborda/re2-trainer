@@ -53,6 +53,47 @@ candidates, 36 of them wrong — and writing to all 37 froze the game. It also
 hard-coded enemy HP at 620, silently missing every enemy with different HP,
 which in one room was all of them.
 
+### Engine flags beat write loops
+
+The engine exposes its own switches, found by reading field names:
+
+```
+app.ropeway.HitPointController
+  +0x01  <Invincible>k__BackingField
+  +0x02  <NoDamage>k__BackingField
+
+app.ropeway.GameClock
+  +0x29  _MeasureGameElapsedTime     clear to stop the in-game timer
+```
+
+These are *set*, not pinned. Nothing races the engine, nothing fights a save,
+and there is no loop to crash. The in-game timer stopped dead at 01:27:35 the
+moment the flag was cleared, after five different value-scanning approaches had
+failed to even locate it.
+
+### There is no infinite-ammo flag
+
+Searched the entire type database and string pool: no `Infinite`, `Unlimited`,
+`Endless` or `NoConsume` name exists anywhere. RE2's six bonus weapons are
+infinite because the game's *code* special-cases those weapon IDs, not because
+of a data field. Any other weapon can only be topped up by writing `Count`,
+which is what the Infinite Magnum toggle does.
+
+Setting `Count = -1` (the value some infinite weapons appeared to hold) does not
+work — it displays as `-1` and decrements normally.
+
+### Inventory
+
+```
+InventoryManager -> CurrentInventory -> _Slots -> Slot._Stock -> DefaultItem
+PrimitiveItem:  ItemId, WeaponId, WeaponParts, BulletId, Count
+```
+
+Every hop is a named field, which reaches the single authoritative slot list.
+Signature scanning found ~15 parallel copies of the inventory with no way to
+tell which the game actually read — the reason earlier item edits kept
+appearing and then vanishing on reload.
+
 ### Why not pointer chains
 
 An earlier version shipped 43 static chains verified to survive one game

@@ -106,6 +106,12 @@ public struct TypeDB {
         return vt
     }
 
+    /// Per-type field base, stored immediately before `managed_vt`.
+    /// Field offsets from the TDB are relative to `object + fieldPtrOffset`.
+    public func fieldPtrOffset(_ mem: ProcessMemory, managedVT vt: UInt64) -> Int32 {
+        mem.readI32(vt &- 8) ?? 0
+    }
+
     /// All live instances of a type: addresses whose first field is `managedVT`.
     public func instances(_ mem: ProcessMemory, managedVT vt: UInt64) -> [UInt64] {
         var out: [UInt64] = []

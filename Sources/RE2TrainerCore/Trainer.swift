@@ -28,7 +28,13 @@ public final class Trainer: ObservableObject {
     @Published public var oneHitKill = false     { didSet { toggle(.oneHit, oneHitKill) } }
     @Published public var infiniteMagnum = false { didSet { toggle(.magnum, infiniteMagnum) } }
 
-    public enum Feature: String { case godmode, oneHit, magnum }
+    /// Engine-native flags. Unlike the HP-pinning loops these are simply set:
+    /// the game honours them itself, so nothing races the engine or a save.
+    @Published public var invincible = false { didSet { toggle(.invincible, invincible) } }
+    @Published public var noDamage   = false { didSet { toggle(.noDamage, noDamage) } }
+    @Published public var freezeTimer = false { didSet { toggle(.freezeTimer, freezeTimer) } }
+
+    public enum Feature: String { case godmode, oneHit, magnum, invincible, noDamage, freezeTimer }
 
     private var mem: ProcessMemory?
     private var gameTypes: GameTypes?
@@ -84,7 +90,19 @@ public final class Trainer: ObservableObject {
     }
 
     private func toggle(_ f: Feature, _ on: Bool) {
-        guard on else { lock.lock(); running.remove(f); lock.unlock(); return }
+        guard on else {
+            lock.lock(); running.remove(f); lock.unlock()
+            // Clearing a flag must actually clear it in the game.
+            if let mem, let gt = gameTypes {
+                switch f {
+                case .invincible:  gt.setPlayerFlag(mem, field: RE2.invincibleField, on: false)
+                case .noDamage:    gt.setPlayerFlag(mem, field: RE2.noDamageField, on: false)
+                case .freezeTimer: gt.setGameClock(mem, running: true)
+                default: break
+                }
+            }
+            return
+        }
         if f == .godmode, gameTypes == nil {
             set { t in
                 t.godmode = false
@@ -98,6 +116,9 @@ public final class Trainer: ObservableObject {
                 case .godmode: t.godmode = false
                 case .oneHit:  t.oneHitKill = false
                 case .magnum:  t.infiniteMagnum = false
+                case .invincible:  t.invincible = false
+                case .noDamage:    t.noDamage = false
+                case .freezeTimer: t.freezeTimer = false
                 }
             }
             return
@@ -111,7 +132,6 @@ public final class Trainer: ObservableObject {
     private func run(_ f: Feature) {
         guard let mem else { return }
         let target = pid
-        var vtable: UInt64?
 
         while isRunning(f) {
             if kill(target, 0) != 0 { set { $0.attached = false; $0.status = "Game exited" }; break }
@@ -153,13 +173,23 @@ public final class Trainer: ObservableObject {
                 }
                 set { $0.enemiesTracked = es.count }
 
+            case .invincible:
+                _ = gameTypes?.setPlayerFlag(mem, field: RE2.invincibleField, on: true)
+
+            case .noDamage:
+                _ = gameTypes?.setPlayerFlag(mem, field: RE2.noDamageField, on: true)
+
+            case .freezeTimer:
+                _ = gameTypes?.setGameClock(mem, running: false)
+
             case .magnum:
-                if vtable == nil { vtable = Scanner.itemVTable(mem) }
-                if let vt = vtable {
-                    Scanner.applyWeaponAmmo(mem, vtable: vt,
-                                            weaponID: Trainer.magnumWeaponID,
-                                            quantity: Trainer.magnumAmmo)
-                }
+                // RE2 has no infinite-ammo flag — no "Infinite"/"Unlimited"
+                // string exists anywhere in its type database. The six bonus
+                // weapons are special-cased in code by weapon ID, so any other
+                // weapon can only be topped up. Reached through the one
+                // authoritative slot list rather than scattered copies.
+                _ = gameTypes?.topUpWeapon(mem, weaponId: Trainer.magnumWeaponID,
+                                           to: Trainer.magnumAmmo)
             }
 
             // A full pass reads ~3.5GB, so passes are spaced rather than tight.

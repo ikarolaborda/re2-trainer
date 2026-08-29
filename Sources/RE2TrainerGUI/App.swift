@@ -71,6 +71,12 @@ struct TrainerPanel: View {
                 }
 
                 Toggle("Infinite Magnum", isOn: $trainer.infiniteMagnum)
+
+                Divider().padding(.vertical, 2)
+
+                Toggle("Invincible", isOn: $trainer.invincible)
+                Toggle("No Damage", isOn: $trainer.noDamage)
+                Toggle("Freeze Timer", isOn: $trainer.freezeTimer)
             }
             .toggleStyle(.switch)
             .disabled(!trainer.attached)
