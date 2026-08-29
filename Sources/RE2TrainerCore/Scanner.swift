@@ -157,3 +157,82 @@ public enum Scanner {
         return out
     }
 }
+
+// MARK: - Scan-and-apply
+//
+// These write *during* the scan, so a target is only ever written at the moment
+// it was found. Caching addresses across passes caused a use-after-free crash:
+// killed enemies are deallocated, the game reuses the memory, and a stale write
+// corrupts whatever now lives there. Never cache addresses of transient objects.
+
+public extension Scanner {
+
+    /// Pins player health to max. Returns (componentsTouched, sampleCurrentHP).
+    @discardableResult
+    static func applyGodmode(_ mem: ProcessMemory) -> (count: Int, sample: Int32?) {
+        var count = 0
+        var sample: Int32?
+        mem.scanWritableRegions { base, buf in
+            var i = 0
+            while i + 12 <= buf.count {
+                if buf.loadUnaligned(fromByteOffset: i, as: Int32.self) == 1 {
+                    let m = buf.loadUnaligned(fromByteOffset: i + 4, as: Int32.self)
+                    if m == playerMaxHP {
+                        let c = buf.loadUnaligned(fromByteOffset: i + 8, as: Int32.self)
+                        if c >= 0 && c <= m {
+                            if sample == nil { sample = c }
+                            if c < m { mem.writeI32(base &+ UInt64(i) &+ 8, m); count += 1 }
+                        }
+                    }
+                }
+                i += 4
+            }
+        }
+        return (count, sample)
+    }
+
+    /// Drops confirmed enemy types to 1 HP. Returns how many were alive.
+    @discardableResult
+    static func applyOneHit(_ mem: ProcessMemory, allowed: Set<Int32>? = nil) -> Int {
+        let types = allowed ?? knownEnemyMaxHP
+        var alive = 0
+        mem.scanWritableRegions { base, buf in
+            var i = 0
+            while i + 12 <= buf.count {
+                if buf.loadUnaligned(fromByteOffset: i, as: Int32.self) == 1 {
+                    let m = buf.loadUnaligned(fromByteOffset: i + 4, as: Int32.self)
+                    if types.contains(m), m != playerMaxHP {
+                        let c = buf.loadUnaligned(fromByteOffset: i + 8, as: Int32.self)
+                        if c > 1 && c <= m { mem.writeI32(base &+ UInt64(i) &+ 8, 1); alive += 1 }
+                    }
+                }
+                i += 4
+            }
+        }
+        return alive
+    }
+
+    /// Tops a weapon's magazine up. Returns entries written.
+    @discardableResult
+    static func applyWeaponAmmo(_ mem: ProcessMemory, vtable: UInt64,
+                                weaponID: Int32, quantity: Int32) -> Int {
+        var n = 0
+        mem.scanWritableRegions { base, buf in
+            var i = 0
+            while i + 0x30 <= buf.count {
+                if buf.loadUnaligned(fromByteOffset: i, as: UInt64.self) == vtable {
+                    let item = buf.loadUnaligned(fromByteOffset: i + 0x10, as: Int32.self)
+                    let wep = buf.loadUnaligned(fromByteOffset: i + 0x14, as: Int32.self)
+                    if item == 0 && wep == weaponID {
+                        let q = buf.loadUnaligned(fromByteOffset: i + Int(quantityOffset), as: Int32.self)
+                        if q != quantity {
+                            mem.writeI32(base &+ UInt64(i) &+ quantityOffset, quantity); n += 1
+                        }
+                    }
+                }
+                i += 8
+            }
+        }
+        return n
+    }
+}

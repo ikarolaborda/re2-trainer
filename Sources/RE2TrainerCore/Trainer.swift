@@ -88,18 +88,14 @@ public final class Trainer: ObservableObject {
     private func run(_ f: Feature) {
         guard let mem else { return }
         let target = pid
-        var lastScan = Date.distantPast
-        var health: [HealthComponent] = []
-        var enemies: [HealthComponent] = []
         var vtable: UInt64?
-        var magnumEntries: [UInt64] = []
 
         while isRunning(f) {
             if kill(target, 0) != 0 { set { $0.attached = false; $0.status = "Game exited" }; break }
 
-            // Never write while the game is serializing a save. Doing so froze
-            // the game twice: our writes raced SaveThread_SerializeManager as it
-            // walked the same structures.
+            // Never write while the game is serializing a save: our writes raced
+            // SaveThread_SerializeManager walking the same structures and froze
+            // the game twice.
             if SaveGuard.isSaving(mem) {
                 set { $0.pausedForSave = true }
                 usleep(200_000)
@@ -107,46 +103,30 @@ public final class Trainer: ObservableObject {
             }
             set { $0.pausedForSave = false }
 
-            let due = Date().timeIntervalSince(lastScan) > 5
-
+            // Each pass scans and writes in one traversal. Addresses are never
+            // reused across passes -- killed enemies are freed and their memory
+            // recycled, so a cached write lands in someone else's object. That
+            // caused a use-after-free crash (EXC_BAD_ACCESS at 0x12).
             switch f {
             case .godmode:
-                if due { health = Scanner.playerHealth(mem); lastScan = Date() }
-                var seen: Int32?
-                for h in health {
-                    guard let mx = mem.readI32(h.address &+ 4), mx == Scanner.playerMaxHP,
-                          let cur = mem.readI32(h.currentOffset), cur >= 0, cur <= mx else { continue }
-                    if seen == nil { seen = cur }
-                    if cur < mx { mem.writeI32(h.currentOffset, mx) }
-                }
-                if let v = seen { set { $0.playerHP = "\(v)/\(Scanner.playerMaxHP)" } }
+                let (_, sample) = Scanner.applyGodmode(mem)
+                if let v = sample { set { $0.playerHP = "\(v)/\(Scanner.playerMaxHP)" } }
 
             case .oneHit:
-                if due {
-                    enemies = Scanner.enemyHealth(mem)
-                    lastScan = Date()
-                    let n = enemies.count
-                    set { $0.enemiesTracked = n }
-                }
-                for e in enemies {
-                    guard let mx = mem.readI32(e.address &+ 4), mx == e.maxHP,
-                          let cur = mem.readI32(e.currentOffset), cur > 1, cur <= mx else { continue }
-                    mem.writeI32(e.currentOffset, 1)
-                }
+                let alive = Scanner.applyOneHit(mem)
+                set { $0.enemiesTracked = alive }
 
             case .magnum:
-                if due {
-                    if vtable == nil { vtable = Scanner.itemVTable(mem) }
-                    if let vt = vtable {
-                        magnumEntries = Scanner.weaponEntries(mem, vtable: vt, weaponID: Trainer.magnumWeaponID)
-                    }
-                    lastScan = Date()
-                }
-                for e in magnumEntries where mem.readI32(e &+ Scanner.quantityOffset) != Trainer.magnumAmmo {
-                    mem.writeI32(e &+ Scanner.quantityOffset, Trainer.magnumAmmo)
+                if vtable == nil { vtable = Scanner.itemVTable(mem) }
+                if let vt = vtable {
+                    Scanner.applyWeaponAmmo(mem, vtable: vt,
+                                            weaponID: Trainer.magnumWeaponID,
+                                            quantity: Trainer.magnumAmmo)
                 }
             }
-            usleep(130_000)
+
+            // A full pass reads ~3.5GB, so passes are spaced rather than tight.
+            usleep(700_000)
         }
 
         if f == .oneHit { set { $0.enemiesTracked = 0 } }

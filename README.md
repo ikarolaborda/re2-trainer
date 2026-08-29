@@ -64,6 +64,19 @@ This is not a precaution, it is a fix: writing into the inventory and health
 structures while the game walked them for serialization froze the game twice,
 both times requiring a force-quit.
 
+### Never cache addresses of transient objects
+
+Each pass scans and writes in a single traversal. An earlier version cached
+target addresses for 5 seconds and wrote to them at 8 Hz, which crashed the
+game: killed enemies are deallocated, the game recycles the memory, and a
+stale write lands inside whatever object now occupies that address. The result
+was `EXC_BAD_ACCESS at 0x12` on the game's job thread — a corrupted pointer
+being dereferenced.
+
+Re-validating the struct before writing is *not* sufficient, because recycled
+memory can match the signature by coincidence. The only safe rule is to write
+a target only in the same traversal that found it.
+
 ### Cost
 
 A full scan reads ~3.5 GB. Loops therefore cache their targets and re-scan every

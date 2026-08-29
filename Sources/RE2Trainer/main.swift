@@ -44,36 +44,22 @@ case "status":
 case "godmode":
     let mem = attach()
     print("godmode: pinning player health. ctrl-c to stop.")
-    var cache: [HealthComponent] = []
-    var last = Date.distantPast
     while true {
         if kill(mem.pid, 0) != 0 { print("game exited"); break }
-        if Date().timeIntervalSince(last) > 5 { cache = Scanner.playerHealth(mem); last = Date() }
-        for h in cache {
-            if let cur = mem.readI32(h.currentOffset), cur < h.maxHP, cur >= 0 {
-                mem.writeI32(h.currentOffset, h.maxHP)
-            }
-        }
-        usleep(120_000)
+        if SaveGuard.isSaving(mem) { usleep(200_000); continue }
+        Scanner.applyGodmode(mem)
+        usleep(700_000)
     }
 
 case "onehit":
     let mem = attach()
     print("onehit: dropping enemies to 1 HP. ctrl-c to stop.")
-    var cache: [HealthComponent] = []
-    var last = Date.distantPast
     while true {
         if kill(mem.pid, 0) != 0 { print("game exited"); break }
-        if Date().timeIntervalSince(last) > 5 {
-            cache = Scanner.enemyHealth(mem); last = Date()
-            print("[rescan] \(cache.count) enemy components")
-        }
-        for e in cache {
-            if let cur = mem.readI32(e.currentOffset), cur > 1, cur <= e.maxHP {
-                mem.writeI32(e.currentOffset, 1)
-            }
-        }
-        usleep(150_000)
+        if SaveGuard.isSaving(mem) { usleep(200_000); continue }
+        let n = Scanner.applyOneHit(mem)
+        if n > 0 { print("[pass] \(n) enemies dropped to 1 HP") }
+        usleep(700_000)
     }
 
 default:
