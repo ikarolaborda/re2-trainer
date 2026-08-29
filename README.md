@@ -15,33 +15,49 @@ bundle (which would break its App Store signature).
 
 ## How it works
 
-Heap addresses change every launch, so the trainer ships **static pointer chains**
-instead:
+Everything is **signature-based**: features find their targets by struct *shape*,
+not by address or offset.
 
 ```
-moduleBase + 0xb158138  ->  +0x480  ->  +0x98  ->  +0x390   =  health component
+health component:   +0x00 marker(1)   +0x04 max HP   +0x08 current HP
+item entry:         +0x10 itemID  +0x14 weaponID  +0x18 upgrades
+                    +0x1c ammoType  +0x20 quantity
 ```
 
-`moduleBase` is read at runtime via `proc_regionfilename`, which accounts for ASLR.
-Each chain is dereferenced in turn and validated against the known struct shape before
-use, so a stale chain is skipped rather than trusted.
+The player is identified by `max == 1200`, which no enemy shares. Enemies are
+matched against an allow-list of confirmed max-HP values (zombie = 620).
 
-**43 chains** are bundled for the health component. All of them were verified to survive
-a full game restart — a fresh launch rebases the module *and* reallocates the heap, and
-18 of the original 61 candidates died at that step. Only survivors ship. The trainer
-walks them shortest-first and accepts the first that resolves to a valid component,
-so no single chain is a point of failure.
+### Why not pointer chains
 
-### Health component layout
+The first version of this trainer shipped 43 static pointer chains
+(`moduleBase + offset -> +off -> +off`) to the player's health component. They
+were built from a scan of 61 candidates, of which 43 resolved correctly through
+a full game restart — ASLR rebase and heap reallocation included.
 
-```
-+0x00   marker    always 1
-+0x04   max HP    1200 (player)
-+0x08   current HP
-```
+**On the next restart, all 61 failed.** Not one resolved.
 
-Max HP of 1200 is player-specific, which is what distinguishes the player's component
-from enemy health objects.
+So the "verified" set was a sample of one, and a chain that survives a restart
+once is not a chain that survives restarts. Struct shapes, by contrast, have
+held across every session observed. Signature scanning is also strictly more
+portable: it needs no module base, so it is immune to ASLR, and it survives
+game patches that would invalidate every offset.
+
+The chains are preserved in git history if anyone wants to revisit them.
+
+### Enemy detection is an allow-list, deliberately
+
+A generic "any health-shaped struct that isn't the player" signature matches
+**~86,000** locations in a live game, nearly all of them ordinary data. Writing
+to those would be reckless — an earlier version of this work crashed the game
+by writing to unverified candidates. Only confirmed enemy types are targeted;
+`Scanner.knownEnemyMaxHP` documents how to add more (snapshot, damage one
+enemy, diff for what decreased).
+
+### Cost
+
+A full scan reads ~3.5 GB. Loops therefore cache their targets and re-scan every
+5 seconds, writing to the cached set at ~8 Hz in between. An early version
+scanned at tick frequency and pushed the game to 384% CPU.
 
 ## Version safety
 
@@ -57,10 +73,23 @@ cdhash    adcde5dbe9400fc7f81e6a3762591504a871644f
 
 ## Usage
 
+### GUI (menu bar app)
+
+```sh
+./make_app.sh
+sudo ./RE2Trainer.app/Contents/MacOS/RE2Trainer
+```
+
+A menu-bar icon with switches for Godmode, One-Hit Kill and Infinite Magnum.
+It attaches automatically and re-attaches when the game restarts.
+
+### CLI
+
 ```sh
 swift build -c release
-sudo .build/release/RE2Trainer status     # verify + resolve, changes nothing
-sudo .build/release/RE2Trainer godmode    # pin health to maximum
+sudo .build/release/re2trainer status     # read-only: player, enemies, inventory
+sudo .build/release/re2trainer godmode    # pin player health
+sudo .build/release/re2trainer onehit     # drop enemies to 1 HP
 ```
 
 Root is required for `task_for_pid`. `status` is read-only and is the right first thing
@@ -73,9 +102,16 @@ the memory of a game running on your own machine.
 
 ## Status
 
-- [x] Health (43 verified chains)
-- [ ] Ammo / inventory — item structs are located and understood, chains not yet scanned
-- [ ] Save counter — candidates narrowed but not confirmed
+- [x] Godmode (signature-based)
+- [x] One-hit kill (signature-based, zombie confirmed)
+- [x] Infinite magnum (signature-based, item vtable derived at runtime)
+- [x] GUI with toggles
+- [ ] More enemy types — each needs its max HP confirmed by diffing a kill
+- [ ] Save counter — three addresses found; the game increments on save, so
+      zeroing it makes the next save write 1. Not yet wired into the trainer.
+- [ ] Game timer freeze — unsolved. Value scanning in every encoding (int,
+      float, double, frames, centi/deci/milliseconds) failed; the displayed
+      time appears to be computed at render time rather than stored.
 
 ### Inventory notes (for future work)
 

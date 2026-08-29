@@ -1,11 +1,11 @@
 import Foundation
 
 /// A static pointer chain: `moduleBase + anchor`, then deref-and-add each offset.
-struct Chain {
-    let anchor: UInt64
-    let offsets: [UInt64]
+public struct Chain {
+    public let anchor: UInt64
+    public let offsets: [UInt64]
 
-    func resolve(_ mem: ProcessMemory, moduleBase: UInt64) -> UInt64? {
+    public func resolve(_ mem: ProcessMemory, moduleBase: UInt64) -> UInt64? {
         var addr = moduleBase &+ anchor
         for off in offsets {
             guard let p = mem.readU64(addr) else { return nil }
@@ -15,7 +15,7 @@ struct Chain {
     }
 }
 
-enum Offsets {
+public enum Offsets {
     /// Player health component. Layout:
     ///   +0x00  marker (1)
     ///   +0x04  max HP (1200)
@@ -24,7 +24,7 @@ enum Offsets {
     /// 43 chains, each verified to survive a full game restart
     /// (ASLR rebase + heap reallocation). Sorted shortest-first; the resolver
     /// walks them in order and accepts the first that validates.
-    static let healthChains: [Chain] = [
+    public static let healthChains: [Chain] = [
         Chain(anchor: 0xb158138, offsets: [0x480, 0x98, 0x390]),
         Chain(anchor: 0xb15c428, offsets: [0x450, 0x98, 0x390]),
         Chain(anchor: 0xb158140, offsets: [0x430, 0x98, 0x390]),
@@ -70,7 +70,7 @@ enum Offsets {
         Chain(anchor: 0xb18a230, offsets: [0x5e0, 0x60, 0x98, 0x390]),
     ]
 
-    static let maxHP: Int32 = 1200
-    static let healthMaxOffset: UInt64 = 0x04
-    static let healthCurOffset: UInt64 = 0x08
+    public static let maxHP: Int32 = 1200
+    public static let healthMaxOffset: UInt64 = 0x04
+    public static let healthCurOffset: UInt64 = 0x08
 }

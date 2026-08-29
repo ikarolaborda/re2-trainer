@@ -1,86 +1,90 @@
 import Foundation
 import Darwin
+import RE2TrainerCore
 
-// RE2Trainer - a pointer-chain trainer for the Mac App Store build of
-// Resident Evil 2 (2019).  Requires root for task_for_pid.
+// re2trainer - CLI front end. The GUI (RE2TrainerGUI) drives the same core.
 
 func fail(_ msg: String) -> Never {
     FileHandle.standardError.write(("error: " + msg + "\n").data(using: .utf8)!)
     exit(1)
 }
 
-/// Walks the verified chains and returns the first that points at a real
-/// health component (marker==1, max==1200).  Chain redundancy is the whole
-/// robustness strategy: no single chain is a point of failure.
-func resolveHealth(_ mem: ProcessMemory, base: UInt64) -> (addr: UInt64, chain: Chain)? {
-    for chain in Offsets.healthChains {
-        guard let addr = chain.resolve(mem, moduleBase: base),
-              let marker = mem.readI32(addr),
-              let maxHP = mem.readI32(addr &+ Offsets.healthMaxOffset),
-              let cur = mem.readI32(addr &+ Offsets.healthCurOffset)
-        else { continue }
-        if marker == 1 && maxHP == Offsets.maxHP && cur >= 0 && cur <= maxHP {
-            return (addr, chain)
-        }
-    }
-    return nil
-}
-
-func attach() -> (ProcessMemory, UInt64) {
+func attach() -> ProcessMemory {
     if getuid() != 0 { fail("must run as root (task_for_pid). try: sudo re2trainer ...") }
     guard let pid = GameProcess.findPID() else { fail("Resident Evil 2 is not running") }
     guard let mem = ProcessMemory(pid: pid) else { fail("task_for_pid(\(pid)) failed") }
-    guard let base = GameProcess.moduleBase(mem) else { fail("could not locate module base") }
-    return (mem, base)
+    return mem
 }
 
 let args = CommandLine.arguments
-let cmd = args.count > 1 ? args[1] : "status"
+switch args.count > 1 ? args[1] : "status" {
 
-switch cmd {
 case "status":
     let (ok, detail) = GameProcess.verifyBinary()
     print("binary   : \(ok ? "VERIFIED" : "MISMATCH") (\(detail))")
-    if !ok { print("           offsets were derived from \(GameProcess.expectedVersion); results undefined") }
-    let (mem, base) = attach()
+    let mem = attach()
     print("pid      : \(mem.pid)")
-    print("base     : 0x\(String(base, radix: 16))")
-    if let (addr, chain) = resolveHealth(mem, base: base) {
-        let cur = mem.readI32(addr &+ Offsets.healthCurOffset) ?? -1
-        let mx  = mem.readI32(addr &+ Offsets.healthMaxOffset) ?? -1
-        print("health   : 0x\(String(addr, radix: 16))  \(cur)/\(mx)")
-        print("via      : 0x\(String(chain.anchor, radix: 16)) -> " +
-              chain.offsets.map { "+0x" + String($0, radix: 16) }.joined(separator: " -> "))
+    if let base = GameProcess.moduleBase(mem) {
+        print("base     : 0x\(String(base, radix: 16))")
+    }
+    let player = Scanner.playerHealth(mem)
+    if let first = player.first, let cur = mem.readI32(first.currentOffset) {
+        print("player   : \(cur)/\(first.maxHP)   (\(player.count) components)")
     } else {
-        print("health   : not resolved (are you in-game with a save loaded?)")
+        print("player   : not found — in-game with a save loaded?")
+    }
+    let enemies = Scanner.enemyHealth(mem).filter { (mem.readI32($0.currentOffset) ?? 0) > 1 }
+    print("enemies  : \(enemies.count) alive")
+    if let vt = Scanner.itemVTable(mem) {
+        print("item vt  : 0x\(String(vt, radix: 16))")
+        let mag = Scanner.weaponEntries(mem, vtable: vt, weaponID: Trainer.magnumWeaponID)
+        print("magnum   : \(mag.count) entries")
     }
 
 case "godmode":
-    let (mem, base) = attach()
-    print("godmode: pinning health to \(Offsets.maxHP). ctrl-c to stop.")
-    var topups = 0
-    var lastReport = Date()
+    let mem = attach()
+    print("godmode: pinning player health. ctrl-c to stop.")
+    var cache: [HealthComponent] = []
+    var last = Date.distantPast
     while true {
         if kill(mem.pid, 0) != 0 { print("game exited"); break }
-        if let (addr, _) = resolveHealth(mem, base: base) {
-            if let cur = mem.readI32(addr &+ Offsets.healthCurOffset), cur < Offsets.maxHP {
-                mem.writeI32(addr &+ Offsets.healthCurOffset, Offsets.maxHP)
-                topups += 1
+        if Date().timeIntervalSince(last) > 5 { cache = Scanner.playerHealth(mem); last = Date() }
+        for h in cache {
+            if let cur = mem.readI32(h.currentOffset), cur < h.maxHP, cur >= 0 {
+                mem.writeI32(h.currentOffset, h.maxHP)
             }
         }
-        if Date().timeIntervalSince(lastReport) > 15 {
-            print("[status] topups=\(topups)")
-            lastReport = Date()
+        usleep(120_000)
+    }
+
+case "onehit":
+    let mem = attach()
+    print("onehit: dropping enemies to 1 HP. ctrl-c to stop.")
+    var cache: [HealthComponent] = []
+    var last = Date.distantPast
+    while true {
+        if kill(mem.pid, 0) != 0 { print("game exited"); break }
+        if Date().timeIntervalSince(last) > 5 {
+            cache = Scanner.enemyHealth(mem); last = Date()
+            print("[rescan] \(cache.count) enemy components")
         }
-        usleep(100_000)
+        for e in cache {
+            if let cur = mem.readI32(e.currentOffset), cur > 1, cur <= e.maxHP {
+                mem.writeI32(e.currentOffset, 1)
+            }
+        }
+        usleep(150_000)
     }
 
 default:
     print("""
-    RE2Trainer - Resident Evil 2 (macOS, Mac App Store build \(GameProcess.expectedVersion))
+    RE2Trainer — Resident Evil 2, macOS build \(GameProcess.expectedVersion)
 
     usage: sudo re2trainer <command>
-      status    verify binary, resolve health via pointer chains, print state
-      godmode   keep player health pinned at maximum
+      status    verify binary, report player/enemy/inventory state
+      godmode   pin player health to maximum
+      onehit    drop all enemies to 1 HP
+
+    GUI: sudo .build/release/RE2TrainerGUI
     """)
 }

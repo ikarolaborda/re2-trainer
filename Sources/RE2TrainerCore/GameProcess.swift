@@ -8,14 +8,14 @@ private let kVMRegionBasicInfoCount64 = mach_msg_type_number_t(
     MemoryLayout<vm_region_basic_info_data_64_t>.size / MemoryLayout<Int32>.size)
 
 /// Locates the running game and its ASLR-slid module base.
-enum GameProcess {
-    static let bundleExecutable = "/Applications/Resident Evil 2.app/Contents/MacOS/Resident Evil 2"
+public enum GameProcess {
+    public static let bundleExecutable = "/Applications/Resident Evil 2.app/Contents/MacOS/Resident Evil 2"
 
     /// Version this trainer's offsets were derived from.
-    static let expectedVersion = "1.0.2"
-    static let expectedCDHash  = "adcde5dbe9400fc7f81e6a3762591504a871644f"
+    public static let expectedVersion = "1.0.2"
+    public static let expectedCDHash  = "adcde5dbe9400fc7f81e6a3762591504a871644f"
 
-    static func findPID() -> pid_t? {
+    public static func findPID() -> pid_t? {
         var count = proc_listpids(kProcAllPIDs, 0, nil, 0)
         guard count > 0 else { return nil }
         var pids = [pid_t](repeating: 0, count: Int(count) / MemoryLayout<pid_t>.size)
@@ -31,7 +31,7 @@ enum GameProcess {
     }
 
     /// The lowest mapped address backed by the game binary == __TEXT start == module base.
-    static func moduleBase(_ mem: ProcessMemory) -> UInt64? {
+    public static func moduleBase(_ mem: ProcessMemory) -> UInt64? {
         var address: mach_vm_address_t = 1
         var pathBuf = [CChar](repeating: 0, count: Int(kProcPathMax))
         while true {
@@ -53,7 +53,7 @@ enum GameProcess {
     }
 
     /// Refuse to apply offsets to a build they weren't derived from.
-    static func verifyBinary() -> (ok: Bool, detail: String) {
+    public static func verifyBinary() -> (ok: Bool, detail: String) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
         p.arguments = ["-dvvv", bundleExecutable]
