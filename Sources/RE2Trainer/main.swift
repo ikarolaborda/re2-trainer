@@ -9,6 +9,23 @@ func fail(_ msg: String) -> Never {
     exit(1)
 }
 
+/// Commands that write engine flags the GUI also asserts. Running these while
+/// the GUI holds state produces a change that is reverted within a second, so
+/// they are refused rather than silently lost.
+let guiOwnedCommands: Set<String> = ["flags", "clock"]
+
+func checkOwnership(_ cmd: String) {
+    guard guiOwnedCommands.contains(cmd), let pid = Ownership.heldBy() else { return }
+    if CommandLine.arguments.contains("--force") {
+        FileHandle.standardError.write("warning: GUI (pid \(pid)) owns this state; --force given, it will re-assert within ~1s\n".data(using: .utf8)!)
+        return
+    }
+    fail("""
+    the GUI trainer (pid \(pid)) owns this state and will revert this change.
+      use its toggle instead, quit it, or pass --force
+    """)
+}
+
 func attach() -> ProcessMemory {
     if getuid() != 0 { fail("must run as root (task_for_pid). try: sudo re2trainer ...") }
     guard let pid = GameProcess.findPID() else { fail("Resident Evil 2 is not running") }
@@ -17,7 +34,9 @@ func attach() -> ProcessMemory {
 }
 
 let args = CommandLine.arguments
-switch args.count > 1 ? args[1] : "status" {
+let command = args.count > 1 ? args[1] : "status"
+checkOwnership(command)
+switch command {
 
 case "status":
     let (ok, detail) = GameProcess.verifyBinary()
@@ -94,6 +113,22 @@ case "types":
         shown += 1
     }
 
+case "pinaddr":
+    // pinaddr <addr> <int32bits> [ms] — holds a raw address at a value.
+    // Used for the incinerator countdown (a float frame counter).
+    guard args.count > 3 else { fail("usage: re2trainer pinaddr <addr> <int32> [ms]") }
+    let mem = attach()
+    let addr = UInt64(args[2].replacingOccurrences(of: "0x", with: ""), radix: 16) ?? 0
+    let v = Int32(args[3]) ?? 0
+    let ms = args.count > 4 ? (UInt32(args[4]) ?? 100) : 100
+    print("pinning 0x\(String(addr, radix: 16)) to \(v). ctrl-c to stop.")
+    var n = 0
+    while true {
+        if kill(mem.pid, 0) != 0 { print("game exited"); break }
+        if mem.readI32(addr) != v { mem.writeI32(addr, v); n += 1 }
+        usleep(ms * 1000)
+    }
+
 case "pin":
     // Keeps every carried weapon topped up. ctrl-c to stop.
     let mem = attach()
@@ -143,6 +178,39 @@ case "poke":
     mem.writeI32(addr, v)
     print("  0x\(String(addr, radix: 16)): \(before) -> \(mem.readI32(addr).map(String.init) ?? "?")")
 
+case "str":
+    // Search memory for an ASCII or UTF-16 string.
+    guard args.count > 2 else { fail("usage: re2trainer str <text> [utf16] [max]") }
+    let needle = args[2]
+    let utf16 = args.contains("utf16")
+    let maxHits = Int(args.last ?? "") ?? 20
+    let mem = attach()
+    var pat = [UInt8]()
+    for ch in needle.utf8 { pat.append(ch); if utf16 { pat.append(0) } }
+    var hits = 0
+    mem.scanWritableRegions(minAddress: 0x100000000) { base, buf in
+        if hits >= maxHits { return }
+        var i = 0
+        while i + pat.count <= buf.count && hits < maxHits {
+            if buf.loadUnaligned(fromByteOffset: i, as: UInt8.self) == pat[0] {
+                var ok = true
+                for k in 1..<pat.count where buf.loadUnaligned(fromByteOffset: i+k, as: UInt8.self) != pat[k] { ok = false; break }
+                if ok {
+                    let start = max(0, i - 24)
+                    var ctx = ""
+                    for k in start..<min(buf.count, i + pat.count + 24) {
+                        let c = buf.loadUnaligned(fromByteOffset: k, as: UInt8.self)
+                        ctx += (c >= 32 && c < 127) ? String(UnicodeScalar(c)) : "."
+                    }
+                    print("  0x\(String(base &+ UInt64(i), radix: 16))  \(ctx)")
+                    hits += 1
+                }
+            }
+            i += 1
+        }
+    }
+    print("  \(hits) hit(s)")
+
 case "peek":
     guard args.count > 2 else { fail("usage: re2trainer peek <addr> [count]") }
     let mem = attach()
@@ -153,6 +221,55 @@ case "peek":
         let v = mem.readI32(a).map(String.init) ?? "?"
         let q = mem.readU64(a).map { "0x" + String($0, radix: 16) } ?? "?"
         print(String(format: "  +0x%03x  0x%llx  i32=%@  u64=%@", i*4, a, v as NSString, q as NSString))
+    }
+
+case "findfield":
+    // Search every type's fields for a name substring — the tool that found
+    // the save counter. Prints only types that have live instances by default.
+    guard args.count > 2 else { fail("usage: re2trainer findfield <substring> [all]") }
+    let needle = args[2]
+    let liveOnly = !(args.count > 3 && args[3] == "all")
+    let mem = attach()
+    guard let db = TypeDB.find(mem) else { fail("type database not found") }
+    print("searching \(db.numTypes) types for field \"\(needle)\"\(liveOnly ? " (live only)" : "")…")
+    var hits = 0
+    for i in 0..<db.numTypes where hits < 40 {
+        let fs = db.fields(mem, index: i).filter { $0.name.localizedCaseInsensitiveContains(needle) }
+        guard !fs.isEmpty else { continue }
+        let vt = db.managedVT(mem, index: i)
+        let live = vt.map { db.instances(mem, managedVT: $0).count } ?? 0
+        if liveOnly && live == 0 { continue }
+        let nm = db.fullName(mem, index: i) ?? "?"
+        let fpo = vt.map { db.fieldPtrOffset(mem, managedVT: $0) } ?? 0
+        print("  [\(i)] \(nm)   fieldbase=0x\(String(fpo, radix: 16))  \(live) live")
+        for f in fs { print(String(format: "     +0x%04x  %@", f.offset, f.name as NSString)) }
+        hits += 1
+    }
+    print("  \(hits) type(s)")
+
+case "insts":
+    // List every instance of a type (fields only shows the first).
+    guard args.count > 2 else { fail("usage: re2trainer insts <type substring> [fieldOffset]") }
+    let mem = attach()
+    guard let db = TypeDB.find(mem) else { fail("type database not found") }
+    let off = args.count > 3 ? (UInt64(args[3].replacingOccurrences(of: "0x", with: ""), radix: 16) ?? 0) : 0
+    let exactIndex = UInt32(args[2])
+    for i in 0..<db.numTypes {
+        if let ix = exactIndex { if i != ix { continue } }
+        else { guard let n = db.fullName(mem, index: i), n.localizedCaseInsensitiveContains(args[2]) else { continue } }
+        guard let vt = db.managedVT(mem, index: i) else { continue }
+        let fpo = UInt64(bitPattern: Int64(db.fieldPtrOffset(mem, managedVT: vt)))
+        let insts = db.instances(mem, managedVT: vt)
+        guard !insts.isEmpty else { continue }
+        print("\(db.fullName(mem, index: i) ?? "?")  fieldbase=0x\(String(fpo, radix: 16))  \(insts.count) instances")
+        for o in insts.prefix(24) {
+            if off != 0, let v = mem.readU64(o &+ fpo &+ off) {
+                print("  0x\(String(o, radix: 16))   +0x\(String(off, radix: 16)) = 0x\(String(v, radix: 16))")
+            } else {
+                print("  0x\(String(o, radix: 16))")
+            }
+        }
+        break
     }
 
 case "fields":
@@ -172,6 +289,32 @@ case "fields":
         found += 1
     }
 
+case "clock":
+    // clock 1 = run, clock 0 = freeze. Sets GameClock._MeasureGameElapsedTime.
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let run = args.count > 2 ? (args[2] != "0") : true
+    let n = gt.setGameClock(mem, running: run)
+    print("  game clock \(run ? "RUNNING" : "FROZEN") on \(n) instance(s)")
+
+case "flags":
+    // Read (and optionally set) the player's Invincible / NoDamage flags.
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let base = UInt64(bitPattern: Int64(gt.playerFieldBase(mem)))
+    let hs = gt.playerHealth(mem)
+    if hs.isEmpty { print("no player health controller"); break }
+    if args.count > 2, let v = Int32(args[2]) {
+        let n1 = gt.setPlayerFlag(mem, field: RE2.invincibleField, on: v != 0)
+        let n2 = gt.setPlayerFlag(mem, field: RE2.noDamageField, on: v != 0)
+        print("set Invincible/NoDamage = \(v) on \(n1)/\(n2) controller(s)")
+    }
+    for h in hs {
+        let inv = mem.read(h.object &+ base &+ RE2.invincibleField, count: 1)?.first ?? 255
+        let nod = mem.read(h.object &+ base &+ RE2.noDamageField, count: 1)?.first ?? 255
+        print("  0x\(String(h.object, radix: 16))  hp=\(h.current)/\(h.maxHP)  Invincible=\(inv)  NoDamage=\(nod)")
+    }
+
 case "players":
     // Every HitPointController instance, unfiltered — used to find the
     // player's max HP, which differs per character (Leon 1200, Ada differs).
@@ -185,6 +328,94 @@ case "players":
         let sample = all.first { $0.maxHP == mx }
         print("  max=\(mx)  x\(n)   e.g. cur=\(sample?.current ?? -1)")
     }
+
+case "box":
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let slots = gt.boxSlots(mem)
+    if slots.isEmpty { print("box list empty — open the item box in-game"); break }
+    var occupied = 0
+    print("box slots: \(slots.count)")
+    for (i, s) in slots.enumerated() where !s.isEmpty {
+        print("  \(i)  \(s.weaponId > 0 ? "weapon \(s.weaponId)" : "item \(s.itemId)")  count=\(s.count)")
+        occupied += 1
+        if occupied > 60 { print("  …"); break }
+    }
+    print("occupied: \(slots.filter { !$0.isEmpty }.count) / \(slots.count)")
+
+case "boxgive":
+    // Puts the six genuinely-infinite weapons into empty box slots.
+    // These are infinite because the game special-cases those weapon IDs —
+    // unlike a high Count, which reverts to the real magazine on equip.
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let wanted: [(Int32, Int32)] = [(82,15),(23,17),(47,0),(222,15),(242,15),(252,15)]
+    let slots = gt.boxSlots(mem)
+    if slots.isEmpty { print("box list empty — open the item box in-game"); break }
+    let present = Set(slots.filter { $0.weaponId > 0 }.map { $0.weaponId })
+    var todo = wanted.filter { !present.contains($0.0) }
+    var placed = 0
+    for s in slots where !todo.isEmpty && s.isEmpty {
+        let (w, b) = todo.removeFirst()
+        let base = s.primitive &+ RE2.objectFieldBase
+        mem.writeI32(base &+ RE2.itemIdField, 0)
+        mem.writeI32(base &+ RE2.weaponIdField, w)
+        mem.writeI32(base &+ RE2.partsField, 0)
+        mem.writeI32(base &+ RE2.bulletIdField, b)
+        mem.writeI32(base &+ RE2.countField, 99)
+        print("  -> weapon \(w)")
+        placed += 1
+    }
+    print("placed \(placed); already present: \(present.intersection(Set(wanted.map { $0.0 })).sorted())")
+
+case "boxadd":
+    // boxadd <id>[:count],<id>… — place item IDs into empty box slots.
+    guard args.count > 2 else { fail("usage: re2trainer boxadd <id[:count]>,…") }
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let specs: [(Int32, Int32)] = args[2].split(separator: ",").compactMap {
+        let p = $0.split(separator: ":")
+        guard let id = Int32(p[0]) else { return nil }
+        return (id, p.count > 1 ? (Int32(p[1]) ?? 1) : 1)
+    }
+    let slots = gt.boxSlots(mem)
+    if slots.isEmpty { print("box list empty — open the item box in-game"); break }
+    var todo = specs
+    var placed = 0
+    for s in slots where !todo.isEmpty && s.isEmpty {
+        let (id, c) = todo.removeFirst()
+        let base = s.primitive &+ RE2.objectFieldBase
+        mem.writeI32(base &+ RE2.itemIdField, id)
+        mem.writeI32(base &+ RE2.weaponIdField, -1)
+        mem.writeI32(base &+ RE2.partsField, 0)
+        mem.writeI32(base &+ RE2.bulletIdField, 0)
+        mem.writeI32(base &+ RE2.countField, c)
+        print("  -> item \(id) x\(c)")
+        placed += 1
+    }
+    print("placed \(placed)")
+
+case "boxtrim":
+    // Keeps the infinite weapons plus an explicit keep-list of item IDs;
+    // clears everything else. The box save is serialized and pushed to
+    // iCloud, so a 400-slot box inflates the save ~5x and uploads start
+    // failing.
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let keepWeapons: Set<Int32> = [82, 23, 47, 222, 242, 252]
+    let keepItems: Set<Int32> = Set((args.count > 2 ? args[2] : "").split(separator: ",").compactMap { Int32($0) })
+    let slots = gt.boxSlots(mem)
+    if slots.isEmpty { print("box list empty — open the item box in-game"); break }
+    var kept = 0, cleared = 0
+    for s in slots where !s.isEmpty {
+        // Keep every weapon: they are few, and a box full of bulk items is
+        // what inflated the save ~5x and broke iCloud upload.
+        if s.weaponId > 0 { kept += 1; continue }
+        _ = keepWeapons
+        if s.itemId > 0 && keepItems.contains(s.itemId) { kept += 1; continue }
+        gt.clearSlot(mem, s); cleared += 1
+    }
+    print("kept \(kept), cleared \(cleared)")
 
 case "inv":
     let mem = attach()

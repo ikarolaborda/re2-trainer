@@ -100,7 +100,7 @@ struct TrainerPanel: View {
             HStack {
                 Button("Reattach") { trainer.attach() }
                 Spacer()
-                Button("Quit") { NSApplication.shared.terminate(nil) }
+                Button("Quit") { Ownership.release(); NSApplication.shared.terminate(nil) }
             }
             .font(.caption)
         }

@@ -63,6 +63,8 @@ public final class Trainer: ObservableObject {
         }
         let (ok, _) = GameProcess.verifyBinary()
         mem = m
+        Ownership.claim()
+        startMaintainer()
         set { $0.status = "Resolving type database…" }
         gameTypes = GameTypes(m)
         set {
@@ -220,6 +222,32 @@ public final class Trainer: ObservableObject {
             $0.saveCountStatus = n > 0
                 ? "Was \(prev.map(String.init) ?? "?") — now save, it will record 1"
                 : "Save counter already 0 — save to record 1"
+        }
+    }
+
+    // MARK: - state maintainer
+    //
+    // Asserts the desired value of every engine flag on a slow loop, whether
+    // the toggle is on or off. This is what makes the GUI authoritative: a CLI
+    // write that disagrees is corrected within a second instead of silently
+    // taking effect.
+    private var maintaining = false
+
+    private func startMaintainer() {
+        lock.lock(); defer { lock.unlock() }
+        guard !maintaining else { return }
+        maintaining = true
+        queue.async { [weak self] in
+            while let s = self, s.attached, let mem = s.mem {
+                if kill(s.pid, 0) != 0 { break }
+                if !SaveGuard.isSaving(mem), let gt = s.gameTypes {
+                    gt.setPlayerFlag(mem, field: RE2.invincibleField, on: s.invincible)
+                    gt.setPlayerFlag(mem, field: RE2.noDamageField, on: s.noDamage)
+                    gt.setGameClock(mem, running: !s.freezeTimer)
+                }
+                usleep(1_000_000)
+            }
+            self?.maintaining = false
         }
     }
 

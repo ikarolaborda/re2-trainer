@@ -183,6 +183,11 @@ public struct GameTypes {
 // and could not tell which the game actually read, which is why edits kept
 // appearing and then vanishing.
 public extension RE2 {
+    /// The item box. Its slot list is built by the GUI when the box is opened
+    /// and torn down when closed, so it can only be read while the box is open.
+    static let itemBoxType = "app.ropeway.gui.ItemBoxBehavior"
+    static let boxItemListField: UInt64 = 0x20
+
     static let inventoryManagerType = "app.ropeway.gamemastering.InventoryManager"
     // InventoryManager (fieldbase 0x50)
     static let currentInventoryField: UInt64 = 0x00
@@ -243,6 +248,42 @@ public extension GameTypes {
                                      weaponId: wep, bulletId: bullet, count: count))
         }
         return out
+    }
+
+    /// The item box's slots. Empty unless the box is open in-game.
+    func boxSlots(_ mem: ProcessMemory) -> [InventorySlot] {
+        guard let bi = db.indexOf(mem, fullName: RE2.itemBoxType),
+              let bvt = db.managedVT(mem, index: bi) else { return [] }
+        let bbase = UInt64(bitPattern: Int64(db.fieldPtrOffset(mem, managedVT: bvt)))
+        guard let box = db.instances(mem, managedVT: bvt).first,
+              let list = mem.readU64(box &+ bbase &+ RE2.boxItemListField), list != 0,
+              let arr = mem.readU64(list &+ 0x10), arr != 0,
+              let size = mem.readI32(list &+ 0x18), size > 0, size < 2000
+        else { return [] }
+
+        var out: [InventorySlot] = []
+        for i in 0..<Int(size) {
+            guard let st = mem.readU64(arr &+ RE2.arrayFirstElement &+ UInt64(i) * 8), st != 0,
+                  let prim = mem.readU64(st &+ RE2.objectFieldBase), prim != 0,
+                  let item = mem.readI32(prim &+ RE2.objectFieldBase &+ RE2.itemIdField),
+                  let wep = mem.readI32(prim &+ RE2.objectFieldBase &+ RE2.weaponIdField),
+                  let bullet = mem.readI32(prim &+ RE2.objectFieldBase &+ RE2.bulletIdField),
+                  let count = mem.readI32(prim &+ RE2.objectFieldBase &+ RE2.countField)
+            else { continue }
+            out.append(InventorySlot(slot: st, primitive: prim, itemId: item,
+                                     weaponId: wep, bulletId: bullet, count: count))
+        }
+        return out
+    }
+
+    /// Clears a box slot.
+    func clearSlot(_ mem: ProcessMemory, _ s: InventorySlot) {
+        let base = s.primitive &+ RE2.objectFieldBase
+        mem.writeI32(base &+ RE2.itemIdField, 0)
+        mem.writeI32(base &+ RE2.weaponIdField, -1)
+        mem.writeI32(base &+ RE2.partsField, 0)
+        mem.writeI32(base &+ RE2.bulletIdField, 0)
+        mem.writeI32(base &+ RE2.countField, 0)
     }
 
     /// Keep every carried weapon's magazine topped up.

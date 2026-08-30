@@ -242,3 +242,28 @@ on-screen contents is the reliable approach.
 
 Infinite-ammo weapon IDs: Samurai Edge 82, LE 5 23, Combat Knife 47, ATM-4 222,
 Anti-tank Rocket 242, Minigun 252. There is no infinite Lightning Hawk (magnum).
+
+## The GUI owns trainer state
+
+The CLI and the GUI write the same engine flags. Before this was coordinated,
+a CLI command could appear to work and then be silently reverted a second later
+by a GUI toggle — which happened twice: `NoDamage` stayed on after `Invincible`
+was switched off, and the game clock was re-frozen moments after being restarted.
+
+The GUI is now authoritative:
+
+- While attached, it writes `~/.re2trainer-gui.lock` and **asserts every toggle
+  state once a second, on *and* off**. Turning a switch off actively clears the
+  flag rather than merely ceasing to set it, so state can't drift.
+- The CLI refuses commands that write GUI-owned state (`flags`, `clock`) while
+  that lock is live, and points you at the panel. `--force` overrides, with a
+  warning that the GUI will re-assert within ~1s.
+- The lock records a PID; if the GUI dies without cleaning up, the next CLI run
+  detects the dead process and removes the stale lock.
+
+Both halves need `task_for_pid` and so run under `sudo`, where
+`NSHomeDirectory()` is `/var/root`. The lock path resolves `SUDO_USER` so both
+agree on one file regardless of how each was started.
+
+Commands that don't touch toggle-backed state (`status`, `inv`, `box`, `give`,
+`peek`, TDB inspection) are unaffected.
