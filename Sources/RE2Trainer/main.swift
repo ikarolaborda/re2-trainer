@@ -79,6 +79,75 @@ case "onehit":
         usleep(700_000)
     }
 
+case "types":
+    // Search the type database by name substring.
+    guard args.count > 2 else { fail("usage: re2trainer types <substring>") }
+    let needle = args[2]
+    let mem = attach()
+    guard let db = TypeDB.find(mem) else { fail("type database not found") }
+    print("searching \(db.numTypes) types for \"\(needle)\"…")
+    var shown = 0
+    for i in 0..<db.numTypes where shown < 40 {
+        guard let n = db.fullName(mem, index: i), n.localizedCaseInsensitiveContains(needle) else { continue }
+        let live = db.managedVT(mem, index: i).map { db.instances(mem, managedVT: $0).count } ?? 0
+        print("  [\(i)] \(n)\(live > 0 ? "   <- \(live) LIVE" : "")")
+        shown += 1
+    }
+
+case "players":
+    // Every HitPointController instance, unfiltered — used to find the
+    // player's max HP, which differs per character (Leon 1200, Ada differs).
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let all = gt.allPlayerHealth(mem)
+    print("app.ropeway.HitPointController instances: \(all.count)")
+    var byMax: [Int32: Int] = [:]
+    for h in all { byMax[h.maxHP, default: 0] += 1 }
+    for (mx, n) in byMax.sorted(by: { $0.key > $1.key }) {
+        let sample = all.first { $0.maxHP == mx }
+        print("  max=\(mx)  x\(n)   e.g. cur=\(sample?.current ?? -1)")
+    }
+
+case "inv":
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let slots = gt.inventorySlots(mem)
+    print("slots: \(slots.count)")
+    for (i, s) in slots.enumerated() {
+        let what = s.weaponId > 0 ? "weapon \(s.weaponId)"
+                 : (s.itemId > 0 ? "item \(s.itemId)" : "empty")
+        print(String(format: "  %2d  %-12@  bullet=%d  count=%d", i, what as NSString, s.bulletId, s.count))
+    }
+
+case "give":
+    // Puts the six infinite weapons into empty inventory slots.
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    // weaponId : bulletId
+    let wanted: [(Int32, Int32)] = [
+        (82, 15),   // Samurai Edge (Infinite)
+        (23, 17),   // LE 5 (Infinite)
+        (47, 0),    // Combat Knife (Infinite)
+        (222, 15),  // ATM-4 (Infinite)
+        (242, 15),  // Anti-tank Rocket (Infinite)
+        (252, 15),  // Minigun (Infinite)
+    ]
+    var idx = 0
+    var placed = 0
+    for s in gt.inventorySlots(mem) where idx < wanted.count {
+        guard s.isEmpty else { continue }
+        let (w, b) = wanted[idx]
+        let base = s.primitive &+ RE2.objectFieldBase
+        mem.writeI32(base &+ RE2.itemIdField, 0)
+        mem.writeI32(base &+ RE2.weaponIdField, w)
+        mem.writeI32(base &+ RE2.partsField, 0)
+        mem.writeI32(base &+ RE2.bulletIdField, b)
+        mem.writeI32(base &+ RE2.countField, 99)
+        print("  slot -> weapon \(w) (bullet \(b), count 99)")
+        idx += 1; placed += 1
+    }
+    print(placed > 0 ? "placed \(placed) weapons" : "no empty slots — drop something first")
+
 default:
     print("""
     RE2Trainer — Resident Evil 2, macOS build \(GameProcess.expectedVersion)
@@ -87,6 +156,8 @@ default:
       status    verify binary, report player/enemy/inventory state
       godmode   pin player health to maximum
       onehit    drop all enemies to 1 HP
+      inv       list the player's inventory slots
+      give      put the six infinite weapons into empty slots
 
     GUI: sudo .build/release/RE2TrainerGUI
     """)

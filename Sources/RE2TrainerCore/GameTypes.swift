@@ -134,12 +134,25 @@ public struct GameTypes {
         return n
     }
 
+    /// Reads a health controller.
+    ///
+    /// Deliberately does NOT require a "marker" byte at +0x00. An early version
+    /// did, inferred from Leon's controller before the type database was
+    /// available — the TDB shows that offset is where <Invincible>/<NoDamage>
+    /// live, not a marker. The check silently rejected 100 of 103 live
+    /// controllers, including Ada's, making Godmode look character-specific
+    /// when it was just a bad filter.
     private func read(_ mem: ProcessMemory, _ obj: UInt64) -> TypedHealth? {
-        guard let marker = mem.readI32(obj &+ RE2.markerOffset), marker == 1,
-              let mx = mem.readI32(obj &+ RE2.maxOffset), mx > 0, mx <= 100_000,
+        guard let mx = mem.readI32(obj &+ RE2.maxOffset), mx > 0, mx <= 100_000,
               let cur = mem.readI32(obj &+ RE2.curOffset), cur >= 0, cur <= mx
         else { return nil }
         return TypedHealth(object: obj, maxHP: mx, current: cur)
+    }
+
+    /// Every HitPointController instance, unfiltered.
+    public func allPlayerHealth(_ mem: ProcessMemory) -> [TypedHealth] {
+        guard let vt = playerVT else { return [] }
+        return db.instances(mem, managedVT: vt).compactMap { read(mem, $0) }
     }
 
     /// The player's health controller. Typically exactly one instance.

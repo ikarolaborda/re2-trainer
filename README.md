@@ -78,6 +78,18 @@ to 13 across three save cycles; four were `(index, -1)` handle pairs, writing
 to them crashed the game, and the result was never confirmed. `findfield
 SaveCount` returned the type, field and offset directly.
 
+### A filter that hid the player
+
+Godmode appeared to be Leon-specific: playing as Ada, the player controller
+resolved to "no instance". The cause was a leftover check requiring a "marker"
+byte of 1 at field offset 0, inferred from Leon's controller before the type
+database existed. The TDB shows that offset holds `<Invincible>`/`<NoDamage>`,
+not a marker — and the check was silently rejecting **100 of 103** live
+controllers, Ada's included.
+
+Removing it made Godmode character-agnostic. Both characters have max HP 1200;
+the character was never the variable.
+
 ### Engine flags beat write loops
 
 The engine exposes its own switches, found by reading field names:
