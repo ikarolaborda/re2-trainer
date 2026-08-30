@@ -23,6 +23,7 @@ public final class Trainer: ObservableObject {
     @Published public private(set) var calibrated = false
     @Published public private(set) var calibrationHint = "Not calibrated"
     @Published public private(set) var saveCountStatus = ""
+    @Published public private(set) var extrasStatus = ""
 
 
     @Published public var godmode = false        { didSet { toggle(.godmode, godmode) } }
@@ -37,6 +38,12 @@ public final class Trainer: ObservableObject {
 
     /// Holds bosses (Mr. X) at 0 HP so they stay on their knees.
     @Published public var bossesDown = false { didSet { toggle(.bossesDown, bossesDown) } }
+
+    /// SurvivorCondition flags. IgnoreBlow stops the player being staggered by
+    /// hits; IgnoreGrapple stops zombies and lickers landing grabs. Both are
+    /// asserted by the maintainer, so switching one off clears it immediately.
+    @Published public var noStagger = false { didSet { assertExtras() } }
+    @Published public var noGrab    = false { didSet { assertExtras() } }
 
     public enum Feature: String { case godmode, oneHit, magnum, invincible, noDamage, freezeTimer, bossesDown }
 
@@ -212,6 +219,38 @@ public final class Trainer: ObservableObject {
     // MARK: - calibration
 
     /// Zero the save counter. One-shot: save afterwards and it records 1.
+    /// Apply the SurvivorCondition flags immediately on toggle, rather than
+    /// waiting up to a second for the maintainer's next pass.
+    private func assertExtras() {
+        queue.async { [weak self] in
+            guard let s = self, let mem = s.mem, let gt = s.gameTypes,
+                  !SaveGuard.isSaving(mem) else { return }
+            gt.setIgnoreBlow(mem, on: s.noStagger)
+            gt.setIgnoreGrapple(mem, on: s.noGrab)
+        }
+    }
+
+    /// One-shot counters: these have no meaningful "off" state, so they are
+    /// buttons rather than toggles and the maintainer leaves them alone.
+    public func refillInkRibbons(_ n: Int32 = 99) {
+        queue.async { [weak self] in
+            guard let s = self, let mem = s.mem, let gt = s.gameTypes,
+                  !SaveGuard.isSaving(mem) else { return }
+            let w = gt.setInkRibbons(mem, to: n)
+            DispatchQueue.main.async { s.extrasStatus = "ink ribbons -> \(n) on \(w)" }
+        }
+    }
+
+    public func maximiseSlots(_ n: Int32 = RE2Ext.maxSlotSize) {
+        queue.async { [weak self] in
+            guard let s = self, let mem = s.mem, let gt = s.gameTypes,
+                  !SaveGuard.isSaving(mem) else { return }
+            let before = gt.slotSize(mem).map { String($0.1) }.joined(separator: ",")
+            let w = gt.setSlotSize(mem, to: n)
+            DispatchQueue.main.async { s.extrasStatus = "slots \(before) -> \(n) on \(w)" }
+        }
+    }
+
     public func resetSaveCount() {
         guard let mem, let gt = gameTypes else {
             set { $0.saveCountStatus = "Not attached" }
@@ -244,6 +283,8 @@ public final class Trainer: ObservableObject {
                     gt.setPlayerFlag(mem, field: RE2.invincibleField, on: s.invincible)
                     gt.setPlayerFlag(mem, field: RE2.noDamageField, on: s.noDamage)
                     gt.setGameClock(mem, running: !s.freezeTimer)
+                    gt.setIgnoreBlow(mem, on: s.noStagger)
+                    gt.setIgnoreGrapple(mem, on: s.noGrab)
                 }
                 usleep(1_000_000)
             }

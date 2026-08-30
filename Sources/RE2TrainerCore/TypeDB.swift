@@ -97,6 +97,20 @@ public struct TypeDB {
         return nil
     }
 
+    /// Resolve many type names in a single pass.
+    ///
+    /// indexOf() walks all 102,046 types, so resolving a dozen types one at a
+    /// time costs a dozen full passes at attach. This does it once.
+    public func resolveAll(_ mem: ProcessMemory, names: Set<String>) -> [String: UInt32] {
+        var out: [String: UInt32] = [:]
+        for i in 0..<numTypes {
+            guard let n = fullName(mem, index: i), names.contains(n) else { continue }
+            if out[n] == nil { out[n] = i }
+            if out.count == names.count { break }
+        }
+        return out
+    }
+
     /// `managed_vt` (REObjectInfo*) at +0x40 of the type definition. Every
     /// instance of the type begins with a pointer to this, which is how we
     /// enumerate instances without any signature matching.

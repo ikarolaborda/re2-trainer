@@ -58,6 +58,8 @@ public struct GameTypes {
     public let db: TypeDB
     public private(set) var playerVT: UInt64?
     public private(set) var enemyVT: UInt64?
+    /// Type indices for the extended features, resolved once at attach.
+    public private(set) var extraTypes: [String: UInt32] = [:]
 
     public init?(_ mem: ProcessMemory) {
         guard let db = TypeDB.find(mem) else { return nil }
@@ -69,6 +71,7 @@ public struct GameTypes {
         if let i = db.indexOf(mem, fullName: RE2.enemyHealthType) {
             enemyVT = db.managedVT(mem, index: i)
         }
+        extraTypes = db.resolveAll(mem, names: RE2Ext.allTypes)
         if playerVT == nil && enemyVT == nil { return nil }
     }
 

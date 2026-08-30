@@ -12,7 +12,7 @@ func fail(_ msg: String) -> Never {
 /// Commands that write engine flags the GUI also asserts. Running these while
 /// the GUI holds state produces a change that is reverted within a second, so
 /// they are refused rather than silently lost.
-let guiOwnedCommands: Set<String> = ["flags", "clock"]
+let guiOwnedCommands: Set<String> = ["flags", "clock", "stagger", "grapple"]
 
 func checkOwnership(_ cmd: String) {
     guard guiOwnedCommands.contains(cmd), let pid = Ownership.heldBy() else { return }
@@ -457,6 +457,72 @@ case "give":
     }
     print(placed > 0 ? "placed \(placed) weapons" : "no empty slots — drop something first")
 
+case "ext":
+    // Read-only survey of the extended TDB features. Safe first check: it
+    // writes nothing, so it confirms every type resolves and every field reads
+    // plausibly before anything is set.
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    print("  resolved types:")
+    for t in RE2Ext.allTypes.sorted() {
+        if let r = gt.resolved(t, mem) {
+            let n = gt.db.instances(mem, managedVT: r.vt).count
+            print("    \(t)  vt=0x\(String(r.vt, radix:16)) base=0x\(String(r.base, radix:16))  \(n) live")
+        } else {
+            print("    \(t)  NOT RESOLVED")
+        }
+    }
+    print("  ink ribbons  : \(gt.inkRibbons(mem).map { String($0.1) }.joined(separator: ", "))")
+    print("  item slots   : \(gt.slotSize(mem).map { String($0.1) }.joined(separator: ", "))")
+    print("  conditions   : \(gt.survivorConditions(mem).map { "0x" + String($0, radix: 16) }.joined(separator: ", "))")
+    print("  recoil blocks: \(gt.gunParamBlocks(mem, field: RE2Ext.recoilParamField).count)")
+    print("  sway blocks  : \(gt.gunParamBlocks(mem, field: RE2Ext.deviateParamField).count)")
+
+case "stagger":
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let on = args.count > 2 ? (args[2] != "0") : true
+    print("  IgnoreBlow \(on ? "ON" : "OFF") on \(gt.setIgnoreBlow(mem, on: on)) instance(s)")
+
+case "grapple":
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let on = args.count > 2 ? (args[2] != "0") : true
+    print("  IgnoreGrapple \(on ? "ON" : "OFF") on \(gt.setIgnoreGrapple(mem, on: on)) instance(s)")
+
+case "ribbons":
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let n = args.count > 2 ? (Int32(args[2]) ?? 99) : 99
+    print("  before: \(gt.inkRibbons(mem).map { String($0.1) })")
+    print("  wrote \(gt.setInkRibbons(mem, to: n)) instance(s) = \(n)")
+
+case "slots":
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let n = args.count > 2 ? (Int32(args[2]) ?? RE2Ext.maxSlotSize) : RE2Ext.maxSlotSize
+    print("  before: \(gt.slotSize(mem).map { String($0.1) })")
+    print("  wrote \(gt.setSlotSize(mem, to: n)) instance(s) = \(n)")
+
+case "playtime":
+    // Reads all four GameSaveData time fields. Displayed playtime is believed
+    // to be elapsed minus demo/inventory/pause, in microseconds; this prints
+    // the arithmetic so it can be checked against the in-game clock.
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    guard let r = gt.resolvedIndex(RE2Ext.gameSaveDataIndex, mem) else { fail("GameSaveData not resolved") }
+    func hms(_ us: Int64) -> String {
+        let s = max(0, us) / 1_000_000
+        return String(format: "%02d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+    }
+    for o in gt.db.instances(mem, managedVT: r.vt) {
+        let f = [0x08, 0x10, 0x18, 0x20].map { mem.readU64(o &+ r.base &+ UInt64($0)) ?? 0 }
+        let net = Int64(bitPattern: f[0]) - Int64(bitPattern: f[1])
+                - Int64(bitPattern: f[2]) - Int64(bitPattern: f[3])
+        print("  0x\(String(o, radix:16))  elapsed=\(f[0]) demo=\(f[1]) inv=\(f[2]) pause=\(f[3])")
+        print("     raw=\(hms(Int64(bitPattern: f[0])))  net=\(hms(net))")
+    }
+
 default:
     print("""
     RE2Trainer — Resident Evil 2, macOS build \(GameProcess.expectedVersion)
@@ -468,6 +534,12 @@ default:
       inv       list the player's inventory slots
       give      put the six infinite weapons into empty slots
       topup <w> <n>     set a weapon's ammo count
+      ext       survey the extended TDB features (read-only)
+      stagger <0|1>     IgnoreBlow  — player is not staggered by hits
+      grapple <0|1>     IgnoreGrapple — enemies cannot grab the player
+      ribbons <n>       set typewriter ink ribbons remaining
+      slots <n>         set inventory slot count (max 20)
+      playtime  decode the four GameSaveData time accumulators
       clearweapon <w>   remove a weapon from the inventory
 
     GUI: sudo .build/release/RE2TrainerGUI

@@ -78,6 +78,8 @@ struct TrainerPanel: View {
                 Toggle("No Damage", isOn: $trainer.noDamage)
                 Toggle("Freeze Timer", isOn: $trainer.freezeTimer)
                 Toggle("Mr. X Stays Down", isOn: $trainer.bossesDown)
+                Toggle("No Stagger", isOn: $trainer.noStagger)
+                Toggle("No Grab", isOn: $trainer.noGrab)
             }
             .toggleStyle(.switch)
             .disabled(!trainer.attached)
@@ -87,6 +89,15 @@ struct TrainerPanel: View {
             VStack(alignment: .leading, spacing: 4) {
                 Button("Reset Save Count") { trainer.resetSaveCount() }
                     .disabled(!trainer.attached)
+                Button("Refill Ink Ribbons") { trainer.refillInkRibbons() }
+                    .disabled(!trainer.attached)
+                Button("Max Item Slots") { trainer.maximiseSlots() }
+                    .disabled(!trainer.attached)
+                if !trainer.extrasStatus.isEmpty {
+                    Text(trainer.extrasStatus)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !trainer.saveCountStatus.isEmpty {
                     Text(trainer.saveCountStatus)
                         .font(.caption).foregroundStyle(.secondary)

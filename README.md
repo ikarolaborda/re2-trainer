@@ -267,3 +267,38 @@ agree on one file regardless of how each was started.
 
 Commands that don't touch toggle-backed state (`status`, `inv`, `box`, `give`,
 `peek`, TDB inspection) are unaffected.
+
+## Offline TDB research
+
+The type database is embedded in the game's Mach-O at file offset `0x8da47c8`
+(`TDB\0`, v74, 102,046 types), and every pointer inside it is TDB-relative. So
+the whole database can be read from disk — no running game, no `task_for_pid`:
+
+    python3 tools/tdbx.py search 'HitPointController$'
+    python3 tools/tdbx.py fields 26336
+    python3 tools/tdbx.py info
+
+`tools/tdbx.py` mirrors `TypeDB.swift` exactly. It was checked against fields
+already verified live — `HitPointController.<Invincible>` at +0x01 and
+`<NoDamage>` at +0x02 — before being trusted for new research.
+
+**Names are not unique.** Thirty distinct types share the exact full name
+`GameSaveData`; resolving that one by name returns an unrelated layout and
+nonsense values. Ambiguous types must be resolved by index (`RE2Ext.gameSaveDataIndex`),
+which is safe because the TDB ships inside the binary whose hash we verify.
+
+### Playtime accumulators (decoded)
+
+`GameSaveData` (type 27317) holds four `UInt64` **microsecond** counters:
+
+| field | offset |
+|---|---|
+| `_GameElapsedTime` | +0x08 |
+| `_DemoSpendingTime` | +0x10 |
+| `_InventorySpendingTime` | +0x18 |
+| `_PauseSpendingTime` | +0x20 |
+
+Displayed playtime is `elapsed - demo - inventory - pause`. Measured live:
+`14733793159 - 117885721 - 3186566558 - 9359522194 = 2069818686 µs = 00:34:29`,
+consistent across every live instance. `re2trainer playtime` prints the
+arithmetic.
