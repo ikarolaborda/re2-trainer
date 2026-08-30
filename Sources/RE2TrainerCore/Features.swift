@@ -158,6 +158,30 @@ public extension GameTypes {
         readI32All(mem, type: RE2Ext.survivorInventoryType, field: RE2Ext.currentSlotSizeField)
     }
 
+    /// Zero a recoil block's Pitch/Yaw, returning the originals so the caller
+    /// can put them back. These blocks are shared weapon data rather than
+    /// per-shot state, so "off" must restore rather than just stop writing.
+    func zeroRecoil(_ mem: ProcessMemory, block: UInt64) -> (pitch: Float, yaw: Float)? {
+        guard let vt = mem.readU64(block), vt > 0x100000000 else { return nil }
+        let base = UInt64(bitPattern: Int64(db.fieldPtrOffset(mem, managedVT: vt)))
+        let pa = block &+ base &+ RE2Ext.recoilPitchField
+        let ya = block &+ base &+ RE2Ext.recoilYawField
+        guard let p = mem.readU32(pa), let y = mem.readU32(ya) else { return nil }
+        let orig = (Float(bitPattern: p), Float(bitPattern: y))
+        // Only capture sane originals; a block mid-reload can read as garbage.
+        guard orig.0.isFinite, orig.1.isFinite, orig.0 >= 0, orig.0 < 100 else { return nil }
+        _ = mem.writeI32(pa, 0)
+        _ = mem.writeI32(ya, 0)
+        return orig
+    }
+
+    func restoreRecoil(_ mem: ProcessMemory, block: UInt64, pitch: Float, yaw: Float) {
+        guard let vt = mem.readU64(block), vt > 0x100000000 else { return }
+        let base = UInt64(bitPattern: Int64(db.fieldPtrOffset(mem, managedVT: vt)))
+        _ = mem.writeI32(block &+ base &+ RE2Ext.recoilPitchField, Int32(bitPattern: pitch.bitPattern))
+        _ = mem.writeI32(block &+ base &+ RE2Ext.recoilYawField, Int32(bitPattern: yaw.bitPattern))
+    }
+
     /// Follow Gun's parameter pointers and scale the float fields they hold.
     /// Passing 1.0 restores stock behaviour only if originals were captured;
     /// callers that zero these keep their own snapshot.

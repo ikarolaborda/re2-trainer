@@ -504,6 +504,58 @@ case "slots":
     print("  before: \(gt.slotSize(mem).map { String($0.1) })")
     print("  wrote \(gt.setSlotSize(mem, to: n)) instance(s) = \(n)")
 
+case "recoil":
+    // recoil 1            -> zero Pitch/Yaw, printing the originals
+    // recoil <pitch> <yaw> -> write those values back
+    // The GUI toggle remembers originals itself; the CLI prints them so a
+    // manual restore is possible without guessing.
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    let blocks = gt.gunParamBlocks(mem, field: RE2Ext.recoilParamField)
+    if blocks.isEmpty { fail("no gun equipped — no recoil block to edit") }
+    if args.count > 3, let p = Float(args[2]), let y = Float(args[3]) {
+        for b in blocks { gt.restoreRecoil(mem, block: b, pitch: p, yaw: y) }
+        print("  restored Pitch=\(p) Yaw=\(y) on \(blocks.count) block(s)")
+    } else {
+        for b in blocks {
+            if let o = gt.zeroRecoil(mem, block: b) {
+                print("  0x\(String(b, radix: 16)) zeroed (was Pitch=\(o.pitch) Yaw=\(o.yaw))")
+            } else {
+                print("  0x\(String(b, radix: 16)) skipped — values not sane")
+            }
+        }
+    }
+
+case "gunparams":
+    // Read-only dump of the parameter blocks a Gun points at, so their layout
+    // can be checked against the TDB before anything is written.
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    guard let g = gt.resolved(RE2Ext.gunType, mem) else { fail("Gun not resolved") }
+    func f32(_ a: UInt64) -> Float { Float(bitPattern: mem.readU32(a) ?? 0) }
+    for o in gt.db.instances(mem, managedVT: g.vt) {
+        print("  Gun 0x\(String(o, radix: 16))")
+        for (label, fld, names) in [
+            ("RecoilParam", RE2Ext.recoilParamField,
+             [("Curve", UInt64(0x00)), ("Pitch", 0x08), ("Yaw", 0x0c),
+              ("CurveTime", 0x10), ("InputTime", 0x14), ("Time", 0x18)]),
+            ("DeviateParam", RE2Ext.deviateParamField,
+             [("TransX", UInt64(0x10)), ("TransY", 0x18), ("TransZ", 0x20),
+              ("RotX", 0x28), ("RotY", 0x30), ("RotZ", 0x38), ("LifeTime", 0x40)]),
+        ] {
+            guard let blk = mem.readU64(o &+ g.base &+ fld), blk > 0x100000000 else {
+                print("    \(label): null"); continue
+            }
+            let vt = mem.readU64(blk) ?? 0
+            let base = UInt64(bitPattern: Int64(gt.db.fieldPtrOffset(mem, managedVT: vt)))
+            print("    \(label) @0x\(String(blk, radix: 16)) vt=0x\(String(vt, radix: 16)) base=0x\(String(base, radix: 16))")
+            for (n, off) in names {
+                let a = blk &+ base &+ off
+                print("      \(n) = \(f32(a))   (u32=\(mem.readU32(a) ?? 0))")
+            }
+        }
+    }
+
 case "setplaytime":
     // setplaytime HH:MM:SS — the shown clock is elapsed minus demo minus
     // pause, so only _GameElapsedTime is rewritten and the other three

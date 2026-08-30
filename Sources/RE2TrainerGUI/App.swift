@@ -91,6 +91,7 @@ struct TrainerPanel: View {
                 Toggle("Mr. X Stays Down", isOn: $trainer.bossesDown)
                 Toggle("No Stagger", isOn: $trainer.noStagger)
                 Toggle("No Grab", isOn: $trainer.noGrab)
+                Toggle("No Recoil", isOn: $trainer.noRecoil)
             }
             .toggleStyle(.switch)
             .disabled(!trainer.attached)

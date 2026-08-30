@@ -45,6 +45,12 @@ public final class Trainer: ObservableObject {
     @Published public var noStagger = false { didSet { assertExtras() } }
     @Published public var noGrab    = false { didSet { assertExtras() } }
 
+    /// Zeroes the equipped weapon's camera kick. The recoil block is shared
+    /// weapon data, so the original Pitch/Yaw are captured on enable and
+    /// written back on disable rather than left at zero.
+    @Published public var noRecoil = false { didSet { applyRecoil() } }
+    private var recoilOriginals: [UInt64: (Float, Float)] = [:]
+
     public enum Feature: String { case godmode, oneHit, magnum, invincible, noDamage, freezeTimer, bossesDown }
 
     private var mem: ProcessMemory?
@@ -230,6 +236,32 @@ public final class Trainer: ObservableObject {
         }
     }
 
+    /// Zero every live recoil block, remembering originals for blocks not seen
+    /// before. Runs on the maintainer too, so swapping weapons picks up the new
+    /// block without re-toggling.
+    fileprivate func zeroRecoilBlocks(_ mem: ProcessMemory, _ gt: GameTypes) {
+        for b in gt.gunParamBlocks(mem, field: RE2Ext.recoilParamField) {
+            if let orig = gt.zeroRecoil(mem, block: b), recoilOriginals[b] == nil {
+                recoilOriginals[b] = orig
+            }
+        }
+    }
+
+    private func applyRecoil() {
+        queue.async { [weak self] in
+            guard let s = self, let mem = s.mem, let gt = s.gameTypes,
+                  !SaveGuard.isSaving(mem) else { return }
+            if s.noRecoil {
+                s.zeroRecoilBlocks(mem, gt)
+            } else {
+                for (b, o) in s.recoilOriginals {
+                    gt.restoreRecoil(mem, block: b, pitch: o.0, yaw: o.1)
+                }
+                s.recoilOriginals.removeAll()
+            }
+        }
+    }
+
     /// One-shot counters: these have no meaningful "off" state, so they are
     /// buttons rather than toggles and the maintainer leaves them alone.
     public func refillInkRibbons(_ n: Int32 = 99) {
@@ -285,6 +317,7 @@ public final class Trainer: ObservableObject {
                     gt.setGameClock(mem, running: !s.freezeTimer)
                     gt.setIgnoreBlow(mem, on: s.noStagger)
                     gt.setIgnoreGrapple(mem, on: s.noGrab)
+                    if s.noRecoil { s.zeroRecoilBlocks(mem, gt) }
                 }
                 usleep(1_000_000)
             }
