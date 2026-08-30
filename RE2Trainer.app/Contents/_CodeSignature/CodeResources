@@ -3,9 +3,22 @@
 <plist version="1.0">
 <dict>
 	<key>files</key>
-	<dict/>
+	<dict>
+		<key>Resources/RE2Trainer.icns</key>
+		<data>
+		Cf0JZc8FNylZTqyOWgQz4VoXqSc=
+		</data>
+	</dict>
 	<key>files2</key>
-	<dict/>
+	<dict>
+		<key>Resources/RE2Trainer.icns</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			Rk3vbXS5Xr+Rxq06iloYZxqbVWipd+Ou5NrOMcfKunA=
+			</data>
+		</dict>
+	</dict>
 	<key>rules</key>
 	<dict>
 		<key>^Resources/</key>

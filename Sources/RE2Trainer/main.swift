@@ -504,6 +504,42 @@ case "slots":
     print("  before: \(gt.slotSize(mem).map { String($0.1) })")
     print("  wrote \(gt.setSlotSize(mem, to: n)) instance(s) = \(n)")
 
+case "setplaytime":
+    // setplaytime HH:MM:SS — the shown clock is elapsed minus demo minus
+    // pause, so only _GameElapsedTime is rewritten and the other three
+    // accumulators are left exactly as the game maintains them.
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    guard let r = gt.resolvedIndex(RE2Ext.gameSaveDataIndex, mem) else { fail("GameSaveData not resolved") }
+    if SaveGuard.isSaving(mem) { fail("a save is in progress — try again in a moment") }
+    let spec = args.count > 2 ? args[2] : "00:30:00"
+    let parts = spec.split(separator: ":").compactMap { Int64($0) }
+    guard parts.count == 3 else { fail("usage: setplaytime HH:MM:SS") }
+    let targetUS = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1_000_000
+
+    var changed = 0
+    for o in gt.db.instances(mem, managedVT: r.vt) {
+        let ea = o &+ r.base &+ RE2Ext.elapsedTimeField
+        guard let el = mem.readU64(ea), el > 0,
+              let demo = mem.readU64(o &+ r.base &+ RE2Ext.demoTimeField),
+              let pause = mem.readU64(o &+ r.base &+ RE2Ext.pauseTimeField)
+        else { continue }
+        // Only touch records whose arithmetic currently makes sense, so a
+        // half-initialised container is never written to.
+        let shown = Int64(bitPattern: el) - Int64(bitPattern: demo) - Int64(bitPattern: pause)
+        guard shown > 0, shown < 400 * 3600 * 1_000_000 else { continue }
+        let newElapsed = UInt64(targetUS) &+ demo &+ pause
+        if mem.writeU64(ea, newElapsed) { changed += 1 }
+    }
+    print("  rewrote _GameElapsedTime on \(changed) record(s) -> \(spec)")
+    for o in gt.db.instances(mem, managedVT: r.vt) {
+        guard let el = mem.readU64(o &+ r.base &+ RE2Ext.elapsedTimeField), el > 0,
+              let demo = mem.readU64(o &+ r.base &+ RE2Ext.demoTimeField),
+              let pause = mem.readU64(o &+ r.base &+ RE2Ext.pauseTimeField) else { continue }
+        let s = (Int64(bitPattern: el) - Int64(bitPattern: demo) - Int64(bitPattern: pause)) / 1_000_000
+        print(String(format: "    0x%llx now shows %02d:%02d:%02d", o, s/3600, (s%3600)/60, s%60))
+    }
+
 case "playtime":
     // Reads all four GameSaveData time fields. Displayed playtime is believed
     // to be elapsed minus demo/inventory/pause, in microseconds; this prints
@@ -517,10 +553,12 @@ case "playtime":
     }
     for o in gt.db.instances(mem, managedVT: r.vt) {
         let f = [0x08, 0x10, 0x18, 0x20].map { mem.readU64(o &+ r.base &+ UInt64($0)) ?? 0 }
-        let net = Int64(bitPattern: f[0]) - Int64(bitPattern: f[1])
-                - Int64(bitPattern: f[2]) - Int64(bitPattern: f[3])
+        // Displayed playtime = elapsed - demo - pause. Inventory time counts
+        // as play time and is NOT subtracted; including it gave 00:34:29 when
+        // the game actually showed 01:27:36.
+        let shown = Int64(bitPattern: f[0]) - Int64(bitPattern: f[1]) - Int64(bitPattern: f[3])
         print("  0x\(String(o, radix:16))  elapsed=\(f[0]) demo=\(f[1]) inv=\(f[2]) pause=\(f[3])")
-        print("     raw=\(hms(Int64(bitPattern: f[0])))  net=\(hms(net))")
+        print("     raw=\(hms(Int64(bitPattern: f[0])))  shown=\(hms(shown))")
     }
 
 default:

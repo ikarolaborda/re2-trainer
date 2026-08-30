@@ -49,6 +49,15 @@ public struct ProcessMemory {
     }
 
     @discardableResult
+    public func writeU64(_ address: UInt64, _ value: UInt64) -> Bool {
+        var v = value
+        return withUnsafeBytes(of: &v) { buf in
+            mach_vm_write(task, address,
+                          vm_offset_t(UInt(bitPattern: buf.baseAddress)),
+                          mach_msg_type_number_t(8)) == KERN_SUCCESS
+        }
+    }
+
     public func writeI32(_ address: UInt64, _ value: Int32) -> Bool {
         var v = value
         return withUnsafeBytes(of: &v) { buf in

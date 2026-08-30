@@ -5,7 +5,18 @@ import RE2TrainerCore
 struct RE2TrainerApp: App {
     @StateObject private var trainer = Trainer()
 
+    init() { Privilege.ensureRoot() }
+
     var body: some Scene {
+        // A real window so the app has a Dock icon and can be reopened by
+        // clicking it, alongside the menu-bar panel for quick toggles.
+        Window("RE2 Trainer", id: "main") {
+            TrainerPanel(trainer: trainer)
+                .frame(width: 320)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .windowResizability(.contentSize)
+
         MenuBarExtra("RE2", systemImage: "gamecontroller.fill") {
             TrainerPanel(trainer: trainer)
                 .frame(width: 300)
