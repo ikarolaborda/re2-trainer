@@ -123,6 +123,21 @@ and there is no loop to crash. The in-game timer stopped dead at 01:27:35 the
 moment the flag was cleared, after five different value-scanning approaches had
 failed to even locate it.
 
+### Weapon models are scenario-scoped
+
+Weapons written into Ada's inventory equip but render as empty hands. Their
+`ItemManager.<WeaponStandbyCountArray>` entries are already 1, so the prefab
+request is registered — the assets simply are not resident in her scenario, and
+no memory write can produce a model the game never loaded from disk. Only
+weapons her segment ships (her handgun, the knife) render.
+
+This is the same constraint behind the modding community's advice to move a
+weapon through an item box: that is what makes a scenario load the prefab.
+
+The ammo pin is therefore character-agnostic — it tops up every carried weapon
+rather than a hardcoded ID. An earlier version pinned the magnum (weapon 31)
+specifically, which silently did nothing as Ada.
+
 ### There is no infinite-ammo flag
 
 Searched the entire type database and string pool: no `Infinite`, `Unlimited`,

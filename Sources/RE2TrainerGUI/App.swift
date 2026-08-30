@@ -70,7 +70,7 @@ struct TrainerPanel: View {
                         .padding(.leading, 4)
                 }
 
-                Toggle("Infinite Magnum", isOn: $trainer.infiniteMagnum)
+                Toggle("Infinite Ammo", isOn: $trainer.infiniteMagnum)
 
                 Divider().padding(.vertical, 2)
 

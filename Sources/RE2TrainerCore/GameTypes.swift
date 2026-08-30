@@ -245,6 +245,20 @@ public extension GameTypes {
         return out
     }
 
+    /// Keep every carried weapon's magazine topped up.
+    ///
+    /// Character-agnostic by design: an earlier version hardcoded the magnum
+    /// (weapon 31), which made the toggle do nothing as Ada, whose scenario
+    /// has a different weapon entirely.
+    @discardableResult
+    func topUpAllWeapons(_ mem: ProcessMemory, to count: Int32) -> Int {
+        var n = 0
+        for s in inventorySlots(mem) where s.weaponId > 0 && s.count >= 0 && s.count < count {
+            if mem.writeI32(s.countAddress, count) { n += 1 }
+        }
+        return n
+    }
+
     /// Keep a weapon's magazine topped up.
     ///
     /// RE2 has no infinite-ammo flag — no `Infinite`/`Unlimited` string exists

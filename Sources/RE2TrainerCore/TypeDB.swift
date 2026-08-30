@@ -106,6 +106,34 @@ public struct TypeDB {
         return vt
     }
 
+    /// Named fields of a type: (name, offset). Offsets are relative to
+    /// `object + fieldPtrOffset`.
+    public func fields(_ mem: ProcessMemory, index: UInt32) -> [(name: String, offset: UInt32)] {
+        guard let fieldsArr = mem.readU64(base &+ 0x88),
+              let fieldsImpl = mem.readU64(base &+ 0x90) else { return [] }
+        let td = types &+ UInt64(index) &* Self.typeDefSize
+        guard let w1 = mem.readU64(td &+ 8), let w2 = mem.readU64(td &+ 0x20) else { return [] }
+        let implIndex = (w1 >> 38) & 0x3FFFF
+        let memberField = UInt64((w2 >> 44) & 0xFFFFF)
+        let ti = typesImpl &+ implIndex &* Self.typeImplSize
+        guard let w3 = mem.readU64(ti &+ 0x10) else { return [] }
+        let numFields = UInt32((w3 >> 33) & 0xFFFFFF)
+        guard numFields > 0, numFields < 4096 else { return [] }
+
+        var out: [(String, UInt32)] = []
+        for j in 0..<UInt64(numFields) {
+            guard let fw = mem.readU64(fieldsArr &+ (memberField &+ j) &* 8) else { continue }
+            let implId = (fw >> 19) & 0x7FFFF
+            let fi = fieldsImpl &+ implId &* 0x0c
+            guard let offRaw = mem.readU32(fi &+ 4), let nameRaw = mem.readU32(fi &+ 8) else { continue }
+            let off = offRaw & 0x03FF_FFFF
+            let nameOff = UInt64(nameRaw & 0x0FFF_FFFF)
+            guard let nm = mem.readCString(stringPool &+ nameOff), !nm.isEmpty else { continue }
+            out.append((nm, off))
+        }
+        return out
+    }
+
     /// Per-type field base, stored immediately before `managed_vt`.
     /// Field offsets from the TDB are relative to `object + fieldPtrOffset`.
     public func fieldPtrOffset(_ mem: ProcessMemory, managedVT vt: UInt64) -> Int32 {

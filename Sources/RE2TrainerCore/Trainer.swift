@@ -196,8 +196,7 @@ public final class Trainer: ObservableObject {
                 // weapons are special-cased in code by weapon ID, so any other
                 // weapon can only be topped up. Reached through the one
                 // authoritative slot list rather than scattered copies.
-                _ = gameTypes?.topUpWeapon(mem, weaponId: Trainer.magnumWeaponID,
-                                           to: Trainer.magnumAmmo)
+                _ = gameTypes?.topUpAllWeapons(mem, to: Trainer.magnumAmmo)
             }
 
             // A full pass reads ~3.5GB, so passes are spaced rather than tight.
