@@ -53,10 +53,18 @@ public enum RE2Ext {
     /// removes aim wander; the translation ranges remove muzzle drift.
     public static let deviateRanges: [UInt64] = [0x10, 0x18, 0x20, 0x28, 0x30, 0x38]
 
+    /// app.ropeway.EnemyAttackInitiativeManager — decides which enemies are
+    /// permitted to attack. The group list is rebuilt on request rather than
+    /// every frame, which is why clearing Invincible does not make enemies
+    /// resume attacking until a reload forces a rebuild.
+    public static let attackInitiativeType = "app.ropeway.EnemyAttackInitiativeManager"
+    public static let groupListUpdateRequestField: UInt64 = 0x19
+    public static let debugNoAttackTimerField: UInt64     = 0x10
+
     /// All types the extended features need, resolved in one pass.
     public static let allTypes: Set<String> = [
         survivorConditionType, inventoryManagerType,
-        survivorInventoryType, gunType,
+        survivorInventoryType, gunType, attackInitiativeType,
     ]
 }
 
@@ -122,6 +130,23 @@ public extension GameTypes {
         var n = 0
         for o in survivorConditions(mem) {
             if mem.writeU8(o &+ c.base &+ field, on ? 1 : 0) { n += 1 }
+        }
+        return n
+    }
+
+    /// Ask the engine to rebuild its enemy attack-group list.
+    ///
+    /// The list is not rebuilt every frame, so an enemy that decided the player
+    /// was not worth attacking while Invincible was set stays passive after the
+    /// flag is cleared — until a load forces a rebuild. Setting the request
+    /// flag reproduces that rebuild in place; the engine clears it once it has
+    /// been consumed.
+    @discardableResult
+    func requestAttackGroupRebuild(_ mem: ProcessMemory) -> Int {
+        guard let r = resolved(RE2Ext.attackInitiativeType, mem) else { return 0 }
+        var n = 0
+        for o in db.instances(mem, managedVT: r.vt) {
+            if mem.writeU8(o &+ r.base &+ RE2Ext.groupListUpdateRequestField, 1) { n += 1 }
         }
         return n
     }

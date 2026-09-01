@@ -32,8 +32,15 @@ public final class Trainer: ObservableObject {
 
     /// Engine-native flags. Unlike the HP-pinning loops these are simply set:
     /// the game honours them itself, so nothing races the engine or a save.
-    @Published public var invincible = false { didSet { toggle(.invincible, invincible) } }
-    @Published public var noDamage   = false { didSet { toggle(.noDamage, noDamage) } }
+    // Changing either damage-immunity flag also asks the engine to rebuild its
+    // enemy attack groups, so enemies re-evaluate the player immediately
+    // instead of staying passive until the next load.
+    @Published public var invincible = false {
+        didSet { toggle(.invincible, invincible); wakeAI() }
+    }
+    @Published public var noDamage = false {
+        didSet { toggle(.noDamage, noDamage); wakeAI() }
+    }
     @Published public var freezeTimer = false { didSet { toggle(.freezeTimer, freezeTimer) } }
 
     /// Holds bosses (Mr. X) at 0 HP so they stay on their knees.
@@ -225,6 +232,16 @@ public final class Trainer: ObservableObject {
     // MARK: - calibration
 
     /// Zero the save counter. One-shot: save afterwards and it records 1.
+    /// Force enemies to re-evaluate the player after a damage flag changes.
+    public func wakeAI() {
+        queue.async { [weak self] in
+            guard let s = self, let mem = s.mem, let gt = s.gameTypes,
+                  !SaveGuard.isSaving(mem) else { return }
+            let n = gt.requestAttackGroupRebuild(mem)
+            DispatchQueue.main.async { s.extrasStatus = "AI re-evaluated (\(n) manager)" }
+        }
+    }
+
     /// Apply the SurvivorCondition flags immediately on toggle, rather than
     /// waiting up to a second for the maintainer's next pass.
     private func assertExtras() {

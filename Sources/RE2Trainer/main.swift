@@ -504,6 +504,31 @@ case "slots":
     print("  before: \(gt.slotSize(mem).map { String($0.1) })")
     print("  wrote \(gt.setSlotSize(mem, to: n)) instance(s) = \(n)")
 
+case "aiwake":
+    // Reads, and optionally pokes, the enemy attack-initiative manager.
+    // `aiwake` alone is read-only; `aiwake 1` requests a group-list rebuild.
+    let mem = attach()
+    guard let gt = GameTypes(mem) else { fail("type database not found") }
+    guard let r = gt.resolved(RE2Ext.attackInitiativeType, mem) else {
+        fail("EnemyAttackInitiativeManager not resolved")
+    }
+    let objs = gt.db.instances(mem, managedVT: r.vt)
+    if objs.isEmpty { print("  no live instance"); break }
+    let poke = args.count > 2 && args[2] != "0"
+    for o in objs {
+        let reqA = o &+ r.base &+ RE2Ext.groupListUpdateRequestField
+        let timerA = o &+ r.base &+ RE2Ext.debugNoAttackTimerField
+        let req = mem.read(reqA, count: 1)?.first ?? 255
+        let timer = Float(bitPattern: mem.readU32(timerA) ?? 0)
+        let list = mem.readU64(o &+ r.base) ?? 0
+        print("  0x\(String(o, radix: 16))  GroupListUpdateRequest=\(req)  DebugNoAttackTimer=\(timer)  AttackGroupList=0x\(String(list, radix: 16))")
+        if poke {
+            _ = mem.writeU8(reqA, 1)
+            let now = mem.read(reqA, count: 1)?.first ?? 255
+            print("    -> requested rebuild, now \(now)")
+        }
+    }
+
 case "recoil":
     // recoil 1            -> zero Pitch/Yaw, printing the originals
     // recoil <pitch> <yaw> -> write those values back

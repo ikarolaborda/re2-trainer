@@ -105,6 +105,8 @@ struct TrainerPanel: View {
                     .disabled(!trainer.attached)
                 Button("Max Item Slots") { trainer.maximiseSlots() }
                     .disabled(!trainer.attached)
+                Button("Wake Enemy AI") { trainer.wakeAI() }
+                    .disabled(!trainer.attached)
                 if !trainer.extrasStatus.isEmpty {
                     Text(trainer.extrasStatus)
                         .font(.caption).foregroundStyle(.secondary)

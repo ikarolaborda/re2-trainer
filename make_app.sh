@@ -30,7 +30,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key>      <string>RE2Trainer</string>
   <key>CFBundleIconFile</key>        <string>RE2Trainer</string>
   <key>CFBundlePackageType</key>     <string>APPL</string>
-  <key>CFBundleShortVersionString</key> <string>1.1</string>
+  <key>CFBundleShortVersionString</key> <string>1.2</string>
   <key>LSMinimumSystemVersion</key>  <string>13.0</string>
   <key>NSHighResolutionCapable</key> <true/>
 </dict>
