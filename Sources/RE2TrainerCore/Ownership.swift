@@ -11,29 +11,39 @@ import Foundation
 /// pass, so it is authoritative. The CLI checks the lock and refuses to make
 /// conflicting changes unless forced.
 public enum Ownership {
-    /// The real user's home, not root's.
+    /// Fixed system path, deliberately not derived from a home directory.
     ///
-    /// Both halves of the trainer need task_for_pid and so run under sudo,
-    /// where NSHomeDirectory() is /var/root. Resolving SUDO_USER keeps the CLI
-    /// and the GUI pointed at the same file regardless of how each was started.
-    static var homeDir: String {
+    /// This used to resolve SUDO_USER and fall back to NSHomeDirectory(). That
+    /// worked while both halves were started with `sudo`, but broke silently
+    /// once the app began self-elevating through osascript: there SUDO_USER is
+    /// unset, so the GUI wrote the lock to /var/root while the CLI kept looking
+    /// in the user's home. The guard then never fired, and a GUI toggle could
+    /// quietly revert CLI writes again -- exactly the bug the lock exists to
+    /// prevent. Both halves run as root, so one absolute path always agrees.
+    public static let lockURL = URL(fileURLWithPath: "/var/run/re2trainer-gui.lock")
+
+    /// Locations used by earlier builds, cleaned up so a stale file there
+    /// cannot be mistaken for a live owner.
+    private static var legacyLocks: [URL] {
+        var out = [URL(fileURLWithPath: "/var/root/.re2trainer-gui.lock")]
         if let u = ProcessInfo.processInfo.environment["SUDO_USER"], !u.isEmpty,
            let pw = getpwnam(u), let dir = pw.pointee.pw_dir {
-            return String(cString: dir)
+            out.append(URL(fileURLWithPath: String(cString: dir))
+                .appendingPathComponent(".re2trainer-gui.lock"))
         }
-        return NSHomeDirectory()
-    }
-
-    public static var lockURL: URL {
-        URL(fileURLWithPath: homeDir).appendingPathComponent(".re2trainer-gui.lock")
+        out.append(URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".re2trainer-gui.lock"))
+        return out
     }
 
     public static func claim() {
+        for u in legacyLocks { try? FileManager.default.removeItem(at: u) }
         try? String(getpid()).write(to: lockURL, atomically: true, encoding: .utf8)
     }
 
     public static func release() {
         try? FileManager.default.removeItem(at: lockURL)
+        for u in legacyLocks { try? FileManager.default.removeItem(at: u) }
     }
 
     /// PID of a live GUI holding the lock, if any. Stale locks are cleaned up.
