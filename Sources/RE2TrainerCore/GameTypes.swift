@@ -93,6 +93,22 @@ public struct GameTypes {
         return n
     }
 
+    /// Undo keepBossesDown: give back full HP to any boss still sitting at
+    /// zero. Holding an enemy at 0 HP latches its death state, and simply
+    /// ceasing to write leaves it incapacitated for the rest of the session,
+    /// so turning the feature off has to actively restore.
+    ///
+    /// Enemies are freed and their memory recycled, so nothing is cached:
+    /// this rescans and writes in a single traversal.
+    @discardableResult
+    func reviveBosses(_ mem: ProcessMemory) -> Int {
+        var n = 0
+        for e in allEnemyHealth(mem) where e.maxHP >= RE2.bossMinHP && e.current == 0 {
+            if mem.writeI32(e.object &+ RE2.curOffset, e.maxHP) { n += 1 }
+        }
+        return n
+    }
+
     /// Force bosses onto their knees by holding current HP at zero.
     @discardableResult
     func keepBossesDown(_ mem: ProcessMemory) -> Int {

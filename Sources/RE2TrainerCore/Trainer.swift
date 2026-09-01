@@ -44,7 +44,12 @@ public final class Trainer: ObservableObject {
     @Published public var freezeTimer = false { didSet { toggle(.freezeTimer, freezeTimer) } }
 
     /// Holds bosses (Mr. X) at 0 HP so they stay on their knees.
-    @Published public var bossesDown = false { didSet { toggle(.bossesDown, bossesDown) } }
+    @Published public var bossesDown = false {
+        didSet {
+            toggle(.bossesDown, bossesDown)
+            if !bossesDown { reviveBosses() }
+        }
+    }
 
     /// SurvivorCondition flags. IgnoreBlow stops the player being staggered by
     /// hits; IgnoreGrapple stops zombies and lickers landing grabs. Both are
@@ -232,6 +237,18 @@ public final class Trainer: ObservableObject {
     // MARK: - calibration
 
     /// Zero the save counter. One-shot: save afterwards and it records 1.
+    /// Restore HP to bosses left at zero when the toggle is switched off.
+    public func reviveBosses() {
+        queue.async { [weak self] in
+            guard let s = self, let mem = s.mem, let gt = s.gameTypes,
+                  !SaveGuard.isSaving(mem) else { return }
+            let n = gt.reviveBosses(mem)
+            DispatchQueue.main.async {
+                s.extrasStatus = n > 0 ? "revived \(n) boss(es)" : "no boss needed reviving"
+            }
+        }
+    }
+
     /// Force enemies to re-evaluate the player after a damage flag changes.
     public func wakeAI() {
         queue.async { [weak self] in
